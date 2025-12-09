@@ -142,13 +142,13 @@ class P10Loader(Loader):
             binning_method
         )
 
-        # Must apply mask on P10 Eiger data
-        mask = self.get_mask(
-            channel=data.shape[0],
-            detector_name=self.detector_name,
-            roi=(slice(None), roi[1], roi[2])
-        )
-        data = data * np.where(mask, 0, 1)
+        # Must apply mask on P10 Eiger data, but commenting out for the e2500 detector
+        # mask = self.get_mask(
+        #     channel=data.shape[0],
+        #     detector_name=self.detector_name,
+        #     roi=(slice(None), roi[1], roi[2])
+        # )
+        # data = data * np.where(mask, 0, 1)
 
         return data
 
