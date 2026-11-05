@@ -1,17 +1,38 @@
 import numpy as np
 import pylab as plt
-
 import ipywidgets as widgets
-from IPython.display import display
 import os
 
+from IPython.display import HTML, display
 from scipy.ndimage import median_filter, maximum_filter
 from sklearn.cluster import DBSCAN
-
 from .alien_plotting import *
 
-plt.rc('image', cmap='gray_r')
+# display(HTML("""
+# <style>
+# /* Cluster checkbox containers */
+# .widget-checkbox {
+#     width: 360px !important;
+#     min-width: 360px !important;
+#     height: 65px !important;
+#     box-sizing: border-box !important;
+# }
 
+# /* Confirm selection button */
+# .widget-button {
+#     width: 360px !important;
+#     min-width: 360px !important;
+#     height: 65px !important;
+#     box-sizing: border-box !important;
+# }
+
+# .widget-button button {
+#     width: 100% !important;
+#     height: 100% !important;
+#     box-sizing: border-box !important;
+# }
+# </style>
+# """))
 
 def check_path_create(path):
     if not os.path.exists(path):
@@ -77,7 +98,7 @@ def log_scale_matteotype_renormalization(data,
 ###########################################################################################################################################
 
 def create_intensity_threshold_mask(data_log, threshold,
-                                    plot=False, data=None):
+                                    plot=False, data=None, fig_title=None):
     '''
     Create a mask using a threshold in intensity
 
@@ -87,18 +108,38 @@ def create_intensity_threshold_mask(data_log, threshold,
     :threshold: intensity threshold for the mask (0 < threshold <1)
     :plot: plot the resulting mask
     :data: original non-rescaled data. Only used for the plot
-
+    :fig_title: figure title
     Returns
     ----------
     :mask: intensity threshold mask
     '''
 
-    mask = (data_log> threshold )
+def create_intensity_threshold_mask(
+    data_log, threshold, plot=False, data=None, fig_title=None
+):
+    """
+    Create a mask using a threshold in intensity.
+    """
+    mask = data_log > threshold
+
     if plot:
         if data is not None:
-            plot_3D_projections(data, log_scale=True, mask=mask)
+            fig = plot_3D_projections(
+                data,
+                log_scale=True,
+                mask=mask,
+                fig_title=fig_title,
+            )
         else:
-            plot_3D_projections(data_log, mask=mask)
+            fig = plot_3D_projections(
+                data_log,
+                mask=mask,
+                fig_title=fig_title,
+            )
+
+        display(fig)
+        plt.close(fig)
+
     return mask
 
 
@@ -475,11 +516,13 @@ def plot_clusters_select_2d_projections(
             description=f"Select cluster {label}",
             indent=False,
             layout=widgets.Layout(
-                width="260px",
-                height="45px",
-                padding="8px 12px",
+                padding="10px 12px",
                 border="2px solid #777",
+                box_sizing="border-box",
+                display="flex",
+                align_items="center",
                 justify_content="center",
+                margin="5px",
             ),
             style={"description_width": "initial"},
         )
@@ -640,7 +683,14 @@ def create_mask_from_selected_clusters(data, check_list, pixels, pixels_labels, 
                 mask_alien[tuple(pix)] += 1
 
     if plot:
-        plot_3D_projections(data, log_scale=True, mask=mask_alien, fig_title='data with mask')
+        fig = plot_3D_projections(
+            data,
+            log_scale=True,
+            mask=mask_alien,
+            fig_title="Selected Alien Mask",
+        )
+        display(fig)
+        plt.close(fig)
 
     return mask_alien
 
@@ -679,7 +729,113 @@ def preprocessing(data,
     data_log = log_scale_matteotype_renormalization(data)
     return data, data_log
 
+def display_mask_viewer(mask):
+    """Display an interactive viewer for a 3D detector mask."""
 
+    mask = np.asarray(mask)
+
+    if mask.ndim != 3:
+        raise ValueError(f"Expected a 3D mask, got shape {mask.shape}.")
+
+    # Keep the colour scale fixed across all slices and axes.
+    vmin = np.nanmin(mask)
+    vmax = np.nanmax(mask)
+
+    if vmin == vmax:
+        vmax = vmin + 1
+
+    # Match preprocess detector-axis labels.
+    axis_labels = {
+        0: "axis$_{0}$, rocking curve",
+        1: "axis$_{1}$, det. vert.",
+        2: "axis$_{2}$, det. horiz.",
+    }
+
+    axis_selector = widgets.Dropdown(
+        options=[
+            ("Axis 0 — Rocking curve", 0),
+            ("Axis 1 — Detector vertical", 1),
+            ("Axis 2 — Detector horizontal", 2),
+        ],
+        value=0,
+        description="View:",
+    )
+
+    slice_selector = widgets.IntSlider(
+        min=0,
+        max=mask.shape[0] - 1,
+        value=mask.shape[0] // 2,
+        description="Slice:",
+        continuous_update=True,
+    )
+
+    plot_output = widgets.Output()
+
+    def update_view(*args):
+        axis = axis_selector.value
+        slice_index = slice_selector.value
+
+        slice_2d = np.take(mask, slice_index, axis=axis)
+
+        # Match preprocess orientation for the third projection.
+        if axis == 2:
+            slice_2d = slice_2d.T
+
+        with plot_output:
+            plot_output.clear_output(wait=True)
+
+            fig, ax = plt.subplots(figsize=(4, 3))
+
+            image = ax.imshow(
+                slice_2d,
+                cmap="hot",
+                interpolation="nearest",
+                vmin=vmin,
+                vmax=vmax,
+                aspect="equal",
+            )
+
+            fig.colorbar(image, ax=ax, label="Mask value")
+
+            remaining_axes = [i for i in range(3) if i != axis]
+
+            if axis == 2:
+                ax.set_xlabel(axis_labels[0])
+                ax.set_ylabel(axis_labels[1])
+            else:
+                ax.set_xlabel(axis_labels[remaining_axes[1]])
+                ax.set_ylabel(axis_labels[remaining_axes[0]])
+
+            ax.set_title(
+                f"Mask | Axis {axis} | Slice {slice_index}"
+            )
+
+            fig.tight_layout()
+            display(fig)
+            plt.close(fig)
+
+    def update_axis(*args):
+        axis = axis_selector.value
+
+        slice_selector.max = mask.shape[axis] - 1
+        slice_selector.value = min(
+            slice_selector.value, slice_selector.max
+        )
+
+        update_view()
+
+    axis_selector.observe(update_axis, names="value")
+    slice_selector.observe(update_view, names="value")
+
+    display(
+        widgets.VBox([
+            widgets.HBox([axis_selector, slice_selector]),
+            plot_output,
+        ])
+    )
+
+    update_view()
+    
 
 def clustering_and_filtering(
     mask,

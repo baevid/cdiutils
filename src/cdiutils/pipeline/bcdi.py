@@ -572,15 +572,17 @@ class BcdiPipeline(Pipeline):
     @Pipeline.process
     def remove_aliens(
         self,
-        auto_mask_aliens: bool = True,
+        auto_mask_aliens: bool = False,
         threshold: float = 0.5,
         nb_clusters_kept: int = 10,
         sorting: str = "size",
         remove_hot_pixels: bool = False,
         filter_small_values: bool = True,
-        plot: bool = True,
+        plot_intensity_thr: bool = True,
+        plot_alien_mask: bool = True,
         smooth_mask: bool = True,
         smoothing_size: int = 2,
+        inspect_mask: bool = False,
     ) -> None:
 
         """
@@ -589,22 +591,61 @@ class BcdiPipeline(Pipeline):
 
         This method must be called after preprocess() and before
         phase_retrieval(). It operates on the cropped and binned
-        detector data and preserves all existing masked pixels.
+        detector data and preserves all previously masked pixels.
+
+        Alien diffraction spots are identified by intensity thresholding,
+        optional mask smoothing, and DBSCAN clustering. The user can
+        interactively select the clusters to add to the detector mask.
+
+        After confirmation, the selected alien mask is combined with
+        the existing detector mask. The updated mask is saved to the
+        PyNX input NPZ file and the preprocessed CXI file. A separate
+        NPZ file containing only the newly detected alien mask is also
+        saved.
 
         Args:
-            threshold: Threshold applied to the log-normalised intensity.
-            nb_clusters_kept: Maximum number of clusters offered for
-                interactive selection.
-            sorting: Cluster ordering ("size", "asym", "max", or None).
-            remove_hot_pixels: Apply the original alien-removal hot-pixel
-                filter before clustering.
-            filter_small_values: Set values below one to zero.
-            plot: Display diagnostic plots and the cluster selector.
-            smooth_mask: Apply maximum-filter smoothing to the
-                intensity-threshold mask before clustering.
-            smoothing_size: Size of the maximum filter used for
-                mask smoothing (default: 2).
+            auto_mask_aliens (bool): Enable or disable automatic alien
+                diffraction detection. If False, the method is skipped.
+                Defaults to True.
+            threshold (float): Threshold applied to the log-normalised
+                detector intensity to identify candidate alien pixels.
+                Must be between 0 and 1. Defaults to 0.5.
+            nb_clusters_kept (int): Maximum number of largest clusters
+                retained for interactive selection. Defaults to 10.
+            sorting (str): Ordering of clusters in the interactive
+                selection interface. Supported values are "size",
+                "asym", "max", and "None". Defaults to "size".
+            remove_hot_pixels (bool): Apply the original alien-removal
+                hot-pixel filter during preprocessing. Defaults to False.
+            filter_small_values (bool): Set detector intensity values
+                below one to zero before thresholding. Defaults to True.
+            plot_intensity_thr (bool): Display the diagnostic projections
+                of the intensity-threshold mask before cluster selection.
+                Defaults to True.
+            plot_alien_mask (bool): Display the newly generated alien mask
+                after cluster selection. Defaults to True.
+            smooth_mask (bool): Apply maximum-filter smoothing to the
+                intensity-threshold mask before clustering. This can
+                connect nearby pixels belonging to the same diffraction
+                spot. Defaults to True.
+            smoothing_size (int): Size of the maximum filter used for
+                mask smoothing. Defaults to 2.
+            inspect_mask (bool): Display an interactive slice viewer of
+                the final combined detector mask after confirmation.
+                The viewer allows inspection along all three detector
+                axes. Defaults to False.
+
+        Notes:
+            - Existing masked pixels are preserved when the alien mask
+              is added.
+            - The interactive cluster selector requires user confirmation
+              before the detector mask is updated.
+            - The method must not be followed by preprocess(), as doing
+              so would overwrite the updated mask.
+            - The updated PyNX and CXI masks are written only after
+              successful cluster selection and confirmation.
         """
+        
         if not auto_mask_aliens:
             self.logger.info("Automatic alien masking disabled. Skipping.")
             return
@@ -659,8 +700,9 @@ class BcdiPipeline(Pipeline):
         intensity_mask = alien_removal.create_intensity_threshold_mask(
             data_log,
             threshold=threshold,
-            plot=plot,
+            plot=plot_intensity_thr,
             data=processed_data,
+            fig_title="Intensity Thresholding for Alien Diffraction Detection",
         )
 
         if smooth_mask:
@@ -705,7 +747,7 @@ class BcdiPipeline(Pipeline):
                 pixels,
                 pixels_labels,
                 labels,
-                plot=plot,
+                plot=plot_alien_mask,
             )
             alien_mask = np.asarray(alien_mask) > 0
 
@@ -796,6 +838,9 @@ class BcdiPipeline(Pipeline):
             )
             self.logger.info(f"Saved alien mask to {alien_mask_path}.")
             self.logger.info(f"Updated PyNX mask at {pynx_mask_path}.")
+
+            if inspect_mask:
+                alien_removal.display_mask_viewer(combined_mask)
 
         alien_removal.clustering_and_filtering(
             intensity_mask,

@@ -1,0 +1,560 @@
+[1mdiff --git a/src/cdiutils/pipeline/bcdi.py b/src/cdiutils/pipeline/bcdi.py[m
+[1mindex cc87b49..6938997 100644[m
+[1m--- a/src/cdiutils/pipeline/bcdi.py[m
+[1m+++ b/src/cdiutils/pipeline/bcdi.py[m
+[36m@@ -572,15 +572,17 @@[m [mclass BcdiPipeline(Pipeline):[m
+     @Pipeline.process[m
+     def remove_aliens([m
+         self,[m
+[31m-        auto_mask_aliens: bool = True,[m
+[32m+[m[32m        auto_mask_aliens: bool = False,[m
+         threshold: float = 0.5,[m
+         nb_clusters_kept: int = 10,[m
+         sorting: str = "size",[m
+         remove_hot_pixels: bool = False,[m
+         filter_small_values: bool = True,[m
+[31m-        plot: bool = True,[m
+[32m+[m[32m        plot_intensity_thr: bool = True,[m
+[32m+[m[32m        plot_alien_mask: bool = True,[m
+         smooth_mask: bool = True,[m
+         smoothing_size: int = 2,[m
+[32m+[m[32m        inspect_mask: bool = False,[m
+     ) -> None:[m
+ [m
+         """[m
+[36m@@ -589,22 +591,61 @@[m [mclass BcdiPipeline(Pipeline):[m
+ [m
+         This method must be called after preprocess() and before[m
+         phase_retrieval(). It operates on the cropped and binned[m
+[31m-        detector data and preserves all existing masked pixels.[m
+[32m+[m[32m        detector data and preserves all previously masked pixels.[m
+[32m+[m
+[32m+[m[32m        Alien diffraction spots are identified by intensity thresholding,[m
+[32m+[m[32m        optional mask smoothing, and DBSCAN clustering. The user can[m
+[32m+[m[32m        interactively select the clusters to add to the detector mask.[m
+[32m+[m
+[32m+[m[32m        After confirmation, the selected alien mask is combined with[m
+[32m+[m[32m        the existing detector mask. The updated mask is saved to the[m
+[32m+[m[32m        PyNX input NPZ file and the preprocessed CXI file. A separate[m
+[32m+[m[32m        NPZ file containing only the newly detected alien mask is also[m
+[32m+[m[32m        saved.[m
+ [m
+         Args:[m
+[31m-            threshold: Threshold applied to the log-normalised intensity.[m
+[31m-            nb_clusters_kept: Maximum number of clusters offered for[m
+[31m-                interactive selection.[m
+[31m-            sorting: Cluster ordering ("size", "asym", "max", or None).[m
+[31m-            remove_hot_pixels: Apply the original alien-removal hot-pixel[m
+[31m-                filter before clustering.[m
+[31m-            filter_small_values: Set values below one to zero.[m
+[31m-            plot: Display diagnostic plots and the cluster selector.[m
+[31m-            smooth_mask: Apply maximum-filter smoothing to the[m
+[31m-                intensity-threshold mask before clustering.[m
+[31m-            smoothing_size: Size of the maximum filter used for[m
+[31m-                mask smoothing (default: 2).[m
+[32m+[m[32m            auto_mask_aliens (bool): Enable or disable automatic alien[m
+[32m+[m[32m                diffraction detection. If False, the method is skipped.[m
+[32m+[m[32m                Defaults to True.[m
+[32m+[m[32m            threshold (float): Threshold applied to the log-normalised[m
+[32m+[m[32m                detector intensity to identify candidate alien pixels.[m
+[32m+[m[32m                Must be between 0 and 1. Defaults to 0.5.[m
+[32m+[m[32m            nb_clusters_kept (int): Maximum number of largest clusters[m
+[32m+[m[32m                retained for interactive selection. Defaults to 10.[m
+[32m+[m[32m            sorting (str): Ordering of clusters in the interactive[m
+[32m+[m[32m                selection interface. Supported values are "size",[m
+[32m+[m[32m                "asym", "max", and "None". Defaults to "size".[m
+[32m+[m[32m            remove_hot_pixels (bool): Apply the original alien-removal[m
+[32m+[m[32m                hot-pixel filter during preprocessing. Defaults to False.[m
+[32m+[m[32m            filter_small_values (bool): Set detector intensity values[m
+[32m+[m[32m                below one to zero before thresholding. Defaults to True.[m
+[32m+[m[32m            plot_intensity_thr (bool): Display the diagnostic projections[m
+[32m+[m[32m                of the intensity-threshold mask before cluster selection.[m
+[32m+[m[32m                Defaults to True.[m
+[32m+[m[32m            plot_alien_mask (bool): Display the newly generated alien mask[m
+[32m+[m[32m                after cluster selection. Defaults to True.[m
+[32m+[m[32m            smooth_mask (bool): Apply maximum-filter smoothing to the[m
+[32m+[m[32m                intensity-threshold mask before clustering. This can[m
+[32m+[m[32m                connect nearby pixels belonging to the same diffraction[m
+[32m+[m[32m                spot. Defaults to True.[m
+[32m+[m[32m            smoothing_size (int): Size of the maximum filter used for[m
+[32m+[m[32m                mask smoothing. Defaults to 2.[m
+[32m+[m[32m            inspect_mask (bool): Display an interactive slice viewer of[m
+[32m+[m[32m                the final combined detector mask after confirmation.[m
+[32m+[m[32m                The viewer allows inspection along all three detector[m
+[32m+[m[32m                axes. Defaults to False.[m
+[32m+[m
+[32m+[m[32m        Notes:[m
+[32m+[m[32m            - Existing masked pixels are preserved when the alien mask[m
+[32m+[m[32m              is added.[m
+[32m+[m[32m            - The interactive cluster selector requires user confirmation[m
+[32m+[m[32m              before the detector mask is updated.[m
+[32m+[m[32m            - The method must not be followed by preprocess(), as doing[m
+[32m+[m[32m              so would overwrite the updated mask.[m
+[32m+[m[32m            - The updated PyNX and CXI masks are written only after[m
+[32m+[m[32m              successful cluster selection and confirmation.[m
+         """[m
+[32m+[m[41m        [m
+         if not auto_mask_aliens:[m
+             self.logger.info("Automatic alien masking disabled. Skipping.")[m
+             return[m
+[36m@@ -659,8 +700,9 @@[m [mclass BcdiPipeline(Pipeline):[m
+         intensity_mask = alien_removal.create_intensity_threshold_mask([m
+             data_log,[m
+             threshold=threshold,[m
+[31m-            plot=plot,[m
+[32m+[m[32m            plot=plot_intensity_thr,[m
+             data=processed_data,[m
+[32m+[m[32m            fig_title="Intensity Thresholding for Alien Diffraction Detection",[m
+         )[m
+ [m
+         if smooth_mask:[m
+[36m@@ -705,7 +747,7 @@[m [mclass BcdiPipeline(Pipeline):[m
+                 pixels,[m
+                 pixels_labels,[m
+                 labels,[m
+[31m-                plot=plot,[m
+[32m+[m[32m                plot=plot_alien_mask,[m
+             )[m
+             alien_mask = np.asarray(alien_mask) > 0[m
+ [m
+[36m@@ -797,6 +839,9 @@[m [mclass BcdiPipeline(Pipeline):[m
+             self.logger.info(f"Saved alien mask to {alien_mask_path}.")[m
+             self.logger.info(f"Updated PyNX mask at {pynx_mask_path}.")[m
+ [m
+[32m+[m[32m            if inspect_mask:[m
+[32m+[m[32m                alien_removal.display_mask_viewer(combined_mask)[m
+[32m+[m
+         alien_removal.clustering_and_filtering([m
+             intensity_mask,[m
+             processed_data,[m
+[1mdiff --git a/src/cdiutils/process/alien_plotting.py b/src/cdiutils/process/alien_plotting.py[m
+[1mindex 062a148..05f9c96 100644[m
+[1m--- a/src/cdiutils/process/alien_plotting.py[m
+[1m+++ b/src/cdiutils/process/alien_plotting.py[m
+[36m@@ -3,53 +3,116 @@[m [mimport pylab as plt[m
+ [m
+ from matplotlib import cm[m
+ from matplotlib.colors import Normalize, to_hex[m
+[32m+[m[32mfrom cdiutils.plot.slice import plot_volume_slices[m
+ import plotly.express as px[m
+ [m
+[31m-plt.rc('image', cmap='gray_r')[m
+[31m-[m
+ ###########################################################################################################################################[m
+ ############################################                   Plot utilites                   ############################################[m
+ ###########################################################################################################################################[m
+ [m
+[31m-def plot_3D_projections(data,[m
+[31m-                        mask=None, alpha_mask=.3,[m
+[31m-                        ax=None, fig=None,[m
+[31m-                        cmap=None,[m
+[31m-                        log_scale=False,[m
+[31m-                        fig_title=None):[m
+[31m-    '''[m
+[31m-    Make 3 figure of the 3-dimensional data projection along each axis. Possibility to overlay a mask.[m
+[31m-[m
+[31m-    Parameters[m
+[31m-    ----------[m
+[31m-    :data: 3D scalar array[m
+[31m-    :mask: 3D mask with 0 on unmasked pixels and 1 on masked pixels[m
+[31m-    :alpha_mask: mask transparency[m
+[31m-    :fig, ax: figure and axes (created by default)[m
+[31m-    :cmap: data colormap[m
+[31m-    :log_scale: apply log after projection[m
+[31m-    :fig_title: figure suptitle[m
+[31m-    '''[m
+[32m+[m[32mdef plot_3D_projections([m
+[32m+[m[32m    data,[m
+[32m+[m[32m    mask=None,[m
+[32m+[m[32m    alpha_mask=0.3,[m
+[32m+[m[32m    ax=None,[m
+[32m+[m[32m    fig=None,[m
+[32m+[m[32m    cmap=None,[m
+[32m+[m[32m    log_scale=False,[m
+[32m+[m[32m    fig_title=None,[m
+[32m+[m[32m):[m
+[32m+[m[32m    data = np.asarray(data)[m
+[32m+[m
+[32m+[m[32m    if data.ndim != 3:[m
+[32m+[m[32m        raise ValueError(f"Expected 3D data, got shape {data.shape}.")[m
+[32m+[m
+[32m+[m[32m    # Calculate projections without modifying the original data.[m
+[32m+[m[32m    projections = [[m
+[32m+[m[32m        np.nanmean(data, axis=0),[m
+[32m+[m[32m        np.nanmean(data, axis=1),[m
+[32m+[m[32m        np.nanmean(data, axis=2).T,[m
+[32m+[m[32m    ][m
+[32m+[m
+[32m+[m[32m    # Match the original plotting behaviour:[m
+[32m+[m[32m    # take the logarithm after calculating each projection.[m
+[32m+[m[32m    if log_scale:[m
+[32m+[m[32m        projections = [[m
+[32m+[m[32m            np.log(np.maximum(projection, 1e-10))[m
+[32m+[m[32m            for projection in projections[m
+[32m+[m[32m        ][m
+[32m+[m
+[32m+[m[32m    if mask is not None:[m
+[32m+[m[32m        mask = np.asarray(mask, dtype=float)[m
+[32m+[m[32m        mask_projections = [[m
+[32m+[m[32m            np.nanmean(mask, axis=0),[m
+[32m+[m[32m            np.nanmean(mask, axis=1),[m
+[32m+[m[32m            np.nanmean(mask, axis=2).T,[m
+[32m+[m[32m        ][m
+[32m+[m[32m    else:[m
+[32m+[m[32m        mask_projections = [None] * 3[m
+ [m
+     if fig is None:[m
+[31m-        fig, ax = plt.subplots(1,3, figsize=(12,4))[m
+[32m+[m[32m        fig, axes = plt.subplots([m
+[32m+[m[32m            1, 3, figsize=(6, 2), layout="tight"[m
+[32m+[m[32m        )[m
+[32m+[m[32m    else:[m
+[32m+[m[32m        axes = np.asarray(ax).ravel()[m
+[32m+[m
+[32m+[m[32m    for axis, projection, mask_projection in zip([m
+[32m+[m[32m        axes, projections, mask_projections[m
+[32m+[m[32m    ):[m
+[32m+[m[32m        axis.imshow([m
+[32m+[m[32m            projection,[m
+[32m+[m[32m            cmap=cmap or "turbo",[m
+[32m+[m[32m            aspect="equal",[m
+[32m+[m[32m            interpolation="nearest",[m
+[32m+[m[32m            origin="upper",[m
+[32m+[m[32m        )[m
+[32m+[m
+[32m+[m[32m        if mask_projection is not None:[m
+[32m+[m[32m            mask_plot = (mask_projection != 0).astype(float)[m
+[32m+[m[32m            axis.imshow([m
+[32m+[m[32m                np.dstack([[m
+[32m+[m[32m                    mask_plot,[m
+[32m+[m[32m                    np.zeros(mask_plot.shape),[m
+[32m+[m[32m                    np.zeros(mask_plot.shape),[m
+[32m+[m[32m                    alpha_mask * mask_plot,[m
+[32m+[m[32m                ]),[m
+[32m+[m[32m                aspect="equal",[m
+[32m+[m[32m                interpolation="nearest",[m
+[32m+[m[32m                origin="upper",[m
+[32m+[m[32m            )[m
+[32m+[m
+[32m+[m[32m    # cdiutils detector-axis labels[m
+[32m+[m[32m    axes[0].set_xlabel(r"axis$_{2}$, det. horiz.")[m
+[32m+[m[32m    axes[0].set_ylabel(r"axis$_{1}$, det. vert.")[m
+[32m+[m
+[32m+[m[32m    axes[1].set_xlabel(r"axis$_{2}$, det. horiz.")[m
+[32m+[m[32m    axes[1].set_ylabel(r"axis$_{0}$, rocking curve")[m
+[32m+[m
+[32m+[m[32m    axes[2].set_xlabel(r"axis$_{0}$, rocking curve")[m
+[32m+[m[32m    axes[2].set_ylabel(r"axis$_{1}$, det. vert.")[m
+ [m
+[31m-    for n in range(3):[m
+[31m-        if log_scale:[m
+[31m-            ax[n].imshow(np.log(np.nanmean(data, axis=n)),cmap=cmap, aspect='auto')[m
+[31m-        else:[m
+[31m-            ax[n].imshow(np.nanmean(data, axis=n),cmap=cmap, aspect='auto')[m
+[32m+[m[32m    if fig_title is not None:[m
+[32m+[m[32m        fig.suptitle(fig_title)[m
+ [m
+[31m-        if mask is not None :[m
+[31m-            mask_plot = np.nanmean(mask, axis=n)[m
+[31m-            mask_plot[mask_plot != 0.] = 1.[m
+[31m-            ax[n].imshow( np.dstack([mask_plot, np.zeros(mask_plot.shape), np.zeros(mask_plot.shape), alpha_mask*mask_plot]), aspect='auto')[m
+[32m+[m[32m    fig.tight_layout()[m
+[32m+[m[32m    return fig[m
+[32m+[m
+[32m+[m[32m    axes[0].set_xlabel(r"axis$_{2}$, det. horiz.")[m
+[32m+[m[32m    axes[0].set_ylabel(r"axis$_{1}$, det. vert.")[m
+[32m+[m
+[32m+[m[32m    axes[1].set_xlabel(r"axis$_{2}$, det. horiz.")[m
+[32m+[m[32m    axes[1].set_ylabel(r"axis$_{0}$, rocking curve")[m
+[32m+[m
+[32m+[m[32m    axes[2].set_xlabel(r"axis$_{0}$, rocking curve")[m
+[32m+[m[32m    axes[2].set_ylabel(r"axis$_{1}$, det. vert.")[m
+ [m
+     if fig_title is not None:[m
+[31m-        fig.suptitle(fig_title, fontsize=6)[m
+[32m+[m[32m        fig.suptitle(fig_title)[m
+ [m
+     fig.tight_layout()[m
+[31m-    return[m
+[32m+[m[32m    return fig[m
+[32m+[m
+ [m
+ def plot_3D_slice(data,[m
+                   mask=None,[m
+[36m@@ -61,7 +124,7 @@[m [mdef plot_3D_slice(data,[m
+     '''[m
+ [m
+     if fig is None:[m
+[31m-        fig, ax = plt.subplots(1,3, figsize=(12,4))[m
+[32m+[m[32m        fig, ax = plt.subplots(1,3, figsize=(6,2))[m
+ [m
+     for n in range(3):[m
+         s = [slice(None) for n in range(3)][m
+[36m@@ -80,13 +143,10 @@[m [mdef plot_3D_slice(data,[m
+ [m
+ [m
+ [m
+[31m-[m
+ ###########################################################################################################################################[m
+ ########################                  Plotly functions for a 3D scatter plot of the clusters                   ########################[m
+ ###########################################################################################################################################[m
+ [m
+[31m-[m
+[31m-[m
+ def get_colors(arr, cmap='viridis'):[m
+     '''[m
+     transform an array of integers into an array of different colors[m
+[36m@@ -140,4 +200,4 @@[m [mdef plotly_scatter3D_clusters(pixels, pixels_labels,[m
+     fig.update_traces(marker_size = marker_size)[m
+     fig.show()[m
+ [m
+[31m-    return[m
+[32m+[m[32m    return[m
+\ No newline at end of file[m
+[1mdiff --git a/src/cdiutils/process/alien_removal.py b/src/cdiutils/process/alien_removal.py[m
+[1mindex d1864d1..a069f76 100644[m
+[1m--- a/src/cdiutils/process/alien_removal.py[m
+[1m+++ b/src/cdiutils/process/alien_removal.py[m
+[36m@@ -1,17 +1,38 @@[m
+ import numpy as np[m
+ import pylab as plt[m
+[31m-[m
+ import ipywidgets as widgets[m
+[31m-from IPython.display import display[m
+ import os[m
+ [m
+[32m+[m[32mfrom IPython.display import HTML, display[m
+ from scipy.ndimage import median_filter, maximum_filter[m
+ from sklearn.cluster import DBSCAN[m
+[31m-[m
+ from .alien_plotting import *[m
+ [m
+[31m-plt.rc('image', cmap='gray_r')[m
+[31m-[m
+[32m+[m[32m# display(HTML("""[m
+[32m+[m[32m# <style>[m
+[32m+[m[32m# /* Cluster checkbox containers */[m
+[32m+[m[32m# .widget-checkbox {[m
+[32m+[m[32m#     width: 360px !important;[m
+[32m+[m[32m#     min-width: 360px !important;[m
+[32m+[m[32m#     height: 65px !important;[m
+[32m+[m[32m#     box-sizing: border-box !important;[m
+[32m+[m[32m# }[m
+[32m+[m
+[32m+[m[32m# /* Confirm selection button */[m
+[32m+[m[32m# .widget-button {[m
+[32m+[m[32m#     width: 360px !important;[m
+[32m+[m[32m#     min-width: 360px !important;[m
+[32m+[m[32m#     height: 65px !important;[m
+[32m+[m[32m#     box-sizing: border-box !important;[m
+[32m+[m[32m# }[m
+[32m+[m
+[32m+[m[32m# .widget-button button {[m
+[32m+[m[32m#     width: 100% !important;[m
+[32m+[m[32m#     height: 100% !important;[m
+[32m+[m[32m#     box-sizing: border-box !important;[m
+[32m+[m[32m# }[m
+[32m+[m[32m# </style>[m
+[32m+[m[32m# """))[m
+ [m
+ def check_path_create(path):[m
+     if not os.path.exists(path):[m
+[36m@@ -77,7 +98,7 @@[m [mdef log_scale_matteotype_renormalization(data,[m
+ ###########################################################################################################################################[m
+ [m
+ def create_intensity_threshold_mask(data_log, threshold,[m
+[31m-                                    plot=False, data=None):[m
+[32m+[m[32m                                    plot=False, data=None, fig_title=None):[m
+     '''[m
+     Create a mask using a threshold in intensity[m
+ [m
+[36m@@ -87,18 +108,38 @@[m [mdef create_intensity_threshold_mask(data_log, threshold,[m
+     :threshold: intensity threshold for the mask (0 < threshold <1)[m
+     :plot: plot the resulting mask[m
+     :data: original non-rescaled data. Only used for the plot[m
+[31m-[m
+[32m+[m[32m    :fig_title: figure title[m
+     Returns[m
+     ----------[m
+     :mask: intensity threshold mask[m
+     '''[m
+ [m
+[31m-    mask = (data_log> threshold )[m
+[32m+[m[32mdef create_intensity_threshold_mask([m
+[32m+[m[32m    data_log, threshold, plot=False, data=None, fig_title=None[m
+[32m+[m[32m):[m
+[32m+[m[32m    """[m
+[32m+[m[32m    Create a mask using a threshold in intensity.[m
+[32m+[m[32m    """[m
+[32m+[m[32m    mask = data_log > threshold[m
+[32m+[m
+     if plot:[m
+         if data is not None:[m
+[31m-            plot_3D_projections(data, log_scale=True, mask=mask)[m
+[32m+[m[32m            fig = plot_3D_projections([m
+[32m+[m[32m                data,[m
+[32m+[m[32m                log_scale=True,[m
+[32m+[m[32m                mask=mask,[m
+[32m+[m[32m                fig_title=fig_title,[m
+[32m+[m[32m            )[m
+         else:[m
+[31m-            plot_3D_projections(data_log, mask=mask)[m
+[32m+[m[32m            fig = plot_3D_projections([m
+[32m+[m[32m                data_log,[m
+[32m+[m[32m                mask=mask,[m
+[32m+[m[32m                fig_title=fig_title,[m
+[32m+[m[32m            )[m
+[32m+[m
+[32m+[m[32m        display(fig)[m
+[32m+[m[32m        plt.close(fig)[m
+[32m+[m
+     return mask[m
+ [m
+ [m
+[36m@@ -475,11 +516,13 @@[m [mdef plot_clusters_select_2d_projections([m
+             description=f"Select cluster {label}",[m
+             indent=False,[m
+             layout=widgets.Layout([m
+[31m-                width="260px",[m
+[31m-                height="45px",[m
+[31m-                padding="8px 12px",[m
+[32m+[m[32m                padding="10px 12px",[m
+                 border="2px solid #777",[m
+[32m+[m[32m                box_sizing="border-box",[m
+[32m+[m[32m                display="flex",[m
+[32m+[m[32m                align_items="center",[m
+                 justify_content="center",[m
+[32m+[m[32m                margin="5px",[m
+             ),[m
+             style={"description_width": "initial"},[m
+         )[m
+[36m@@ -640,7 +683,14 @@[m [mdef create_mask_from_selected_clusters(data, check_list, pixels, pixels_labels,[m
+                 mask_alien[tuple(pix)] += 1[m
+ [m
+     if plot:[m
+[31m-        plot_3D_projections(data, log_scale=True, mask=mask_alien, fig_title='data with mask')[m
+[32m+[m[32m        fig = plot_3D_projections([m
+[32m+[m[32m            data,[m
+[32m+[m[32m            log_scale=True,[m
+[32m+[m[32m            mask=mask_alien,[m
+[32m+[m[32m            fig_title="Selected Alien Mask",[m
+[32m+[m[32m        )[m
+[32m+[m[32m        display(fig)[m
+[32m+[m[32m        plt.close(fig)[m
+ [m
+     return mask_alien[m
+ [m
+[36m@@ -679,7 +729,113 @@[m [mdef preprocessing(data,[m
+     data_log = log_scale_matteotype_renormalization(data)[m
+     return data, data_log[m
+ [m
+[32m+[m[32mdef display_mask_viewer(mask):[m
+[32m+[m[32m    """Display an interactive viewer for a 3D detector mask."""[m
+[32m+[m
+[32m+[m[32m    mask = np.asarray(mask)[m
+[32m+[m
+[32m+[m[32m    if mask.ndim != 3:[m
+[32m+[m[32m        raise ValueError(f"Expected a 3D mask, got shape {mask.shape}.")[m
+[32m+[m
+[32m+[m[32m    # Keep the colour scale fixed across all slices and axes.[m
+[32m+[m[32m    vmin = np.nanmin(mask)[m
+[32m+[m[32m    vmax = np.nanmax(mask)[m
+[32m+[m
+[32m+[m[32m    if vmin == vmax:[m
+[32m+[m[32m        vmax = vmin + 1[m
+[32m+[m
+[32m+[m[32m    # Match preprocess detector-axis labels.[m
+[32m+[m[32m    axis_labels = {[m
+[32m+[m[32m        0: "axis$_{0}$, rocking curve",[m
+[32m+[m[32m        1: "axis$_{1}$, det. vert.",[m
+[32m+[m[32m        2: "axis$_{2}$, det. horiz.",[m
+[32m+[m[32m    }[m
+[32m+[m
+[32m+[m[32m    axis_selector = widgets.Dropdown([m
+[32m+[m[32m        options=[[m
+[32m+[m[32m            ("Axis 0 — Rocking curve", 0),[m
+[32m+[m[32m            ("Axis 1 — Detector vertical", 1),[m
+[32m+[m[32m            ("Axis 2 — Detector horizontal", 2),[m
+[32m+[m[32m        ],[m
+[32m+[m[32m        value=0,[m
+[32m+[m[32m        description="View:",[m
+[32m+[m[32m    )[m
+[32m+[m
+[32m+[m[32m    slice_selector = widgets.IntSlider([m
+[32m+[m[32m        min=0,[m
+[32m+[m[32m        max=mask.shape[0] - 1,[m
+[32m+[m[32m        value=mask.shape[0] // 2,[m
+[32m+[m[32m        description="Slice:",[m
+[32m+[m[32m        continuous_update=True,[m
+[32m+[m[32m    )[m
+[32m+[m
+[32m+[m[32m    plot_output = widgets.Output()[m
+[32m+[m
+[32m+[m[32m    def update_view(*args):[m
+[32m+[m[32m        axis = axis_selector.value[m
+[32m+[m[32m        slice_index = slice_selector.value[m
+[32m+[m
+[32m+[m[32m        slice_2d = np.take(mask, slice_index, axis=axis)[m
+[32m+[m
+[32m+[m[32m        # Match preprocess orientation for the third projection.[m
+[32m+[m[32m        if axis == 2:[m
+[32m+[m[32m            slice_2d = slice_2d.T[m
+[32m+[m
+[32m+[m[32m        with plot_output:[m
+[32m+[m[32m            plot_output.clear_output(wait=True)[m
+[32m+[m
+[32m+[m[32m            fig, ax = plt.subplots(figsize=(4, 3))[m
+[32m+[m
+[32m+[m[32m            image = ax.imshow([m
+[32m+[m[32m                slice_2d,[m
+[32m+[m[32m                cmap="hot",[m
+[32m+[m[32m                interpolation="nearest",[m
+[32m+[m[32m                vmin=vmin,[m
+[32m+[m[32m                vmax=vmax,[m
+[32m+[m[32m                aspect="equal",[m
+[32m+[m[32m            )[m
+[32m+[m
+[32m+[m[32m            fig.colorbar(image, ax=ax, label="Mask value")[m
+[32m+[m
+[32m+[m[32m            remaining_axes = [i for i in range(3) if i != axis][m
+[32m+[m
+[32m+[m[32m            if axis == 2:[m
+[32m+[m[32m                ax.set_xlabel(axis_labels[0])[m
+[32m+[m[32m                ax.set_ylabel(axis_labels[1])[m
+[32m+[m[32m            else:[m
+[32m+[m[32m                ax.set_xlabel(axis_labels[remaining_axes[1]])[m
+[32m+[m[32m                ax.set_ylabel(axis_labels[remaining_axes[0]])[m
+[32m+[m
+[32m+[m[32m            ax.set_title([m
+[32m+[m[32m                f"Mask | Axis {axis} | Slice {slice_index}"[m
+[32m+[m[32m            )[m
+[32m+[m
+[32m+[m[32m            fig.tight_layout()[m
+[32m+[m[32m            display(fig)[m
+[32m+[m[32m            plt.close(fig)[m
+[32m+[m
+[32m+[m[32m    def update_axis(*args):[m
+[32m+[m[32m        axis = axis_selector.value[m
+[32m+[m
+[32m+[m[32m        slice_selector.max = mask.shape[axis] - 1[m
+[32m+[m[32m        slice_selector.value = min([m
+[32m+[m[32m            slice_selector.value, slice_selector.max[m
+[32m+[m[32m        )[m
+[32m+[m
+[32m+[m[32m        update_view()[m
+[32m+[m
+[32m+[m[32m    axis_selector.observe(update_axis, names="value")[m
+[32m+[m[32m    slice_selector.observe(update_view, names="value")[m
+[32m+[m
+[32m+[m[32m    display([m
+[32m+[m[32m        widgets.VBox([[m
+[32m+[m[32m            widgets.HBox([axis_selector, slice_selector]),[m
+[32m+[m[32m            plot_output,[m
+[32m+[m[32m        ])[m
+[32m+[m[32m    )[m
+ [m
+[32m+[m[32m    update_view()[m
+[32m+[m[41m    [m
+ [m
+ def clustering_and_filtering([m
+     mask,[m
