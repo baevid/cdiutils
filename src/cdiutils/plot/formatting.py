@@ -1,15 +1,24 @@
-# flake8: noqa, E501
 import warnings
-
-from cycler import cycler
+import sys
 import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
-from mpl_toolkits.axes_grid1 import make_axes_locatable
 import numpy as np
-import colorcet  # noqa, F401
+from cycler import cycler
+from matplotlib import cm
+from mpl_toolkits.axes_grid1 import make_axes_locatable
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes
+from pathlib import Path
+from matplotlib import font_manager
 
+from cdiutils.plot.colormap import AVAILABLE_2D_CMAPS, complex_to_rgb
 
+FONT_DIR = Path(sys.prefix) / "fonts"
+
+if FONT_DIR.exists():
+    for font_file in FONT_DIR.glob("Aptos*.ttf"):
+        font_manager.fontManager.addfont(str(font_file))
+    
 # Planes are given with the indexing convention,
 # i.e. [n, m] -> x-axis = m, y-axis = n
 CXI_VIEW_PARAMETERS = {
@@ -363,25 +372,27 @@ def set_plot_configs():
         },
         "intensity": {
             "title": "Intensity (a.u.)",
-            "cmap": "turbo",
+            "cmap": "inferno",
             "vmin": 0,
             "vmax": None,
         },
         "phase": {
             "title": "Phase (rad)",
-            "cmap": "cet_CET_C9s_r",
+            # "cmap": "cet_CET_C9s_r",
+            "cmap": "coolwarm",
             "vmin": -np.pi,
             "vmax": np.pi,
         },
         "displacement": {
             "title": rf"Displacement ({ANGSTROM_SYMBOL})",
-            "cmap": "cet_CET_D1A",
+            # "cmap": "cet_CET_D1A",
+            "cmap": "RdBu_r",
             "vmin": -0.1,
             "vmax": 0.1,
         },
         "strain": {
             "title": rf"Strain ({PERCENT_SYMBOL})",
-            "cmap": "cet_CET_D13",
+            "cmap": "fast",
             "vmin": -0.05,
             "vmax": 0.05,
         },
@@ -399,7 +410,7 @@ def set_plot_configs():
         },
         "lattice_parameter": {
             "title": rf"Lattice parameter ({ANGSTROM_SYMBOL})",
-            "cmap": "turbo",
+            "cmap": "parula",
             "vmin": None,
             "vmax": None,
         },
@@ -429,25 +440,26 @@ def update_plot_params(
     use_siunitx: bool = True,
     **kwargs,
 ) -> None:
-    """Update the matplotlib plot parameters to plublication style"""
+    """Update the matplotlib plot parameters to publication style"""
 
     if style is None:
         # the default style
         parameters = {
             "lines.linewidth": 1,
             "lines.markersize": 1,
-            "figure.titlesize": 7,
-            "font.size": 6,
+            "figure.titlesize": 9,
+            "font.size": 8,
             "svg.fonttype": "none",
-            "axes.titlesize": 6,
-            "axes.labelsize": 6,
-            "xtick.labelsize": 5,
-            "ytick.labelsize": 5,
-            "legend.fontsize": 6,
+            "axes.titlesize": 8,
+            "axes.labelsize": 8,
+            "xtick.labelsize": 7,
+            "ytick.labelsize": 7,
+            "legend.fontsize": 8,
             "image.interpolation": "none",
-            "font.family": "sans-serif",
-            "font.sans-serif": ["DejaVu Sans", "Liberation Sans"],
-            # "font.sans-serif": "DejaVu Sans",
+            # "font.family": "sans-serif",
+            # "font.sans-serif": ["DejaVu Sans", "Liberation Sans"],
+            "font.family": "Aptos",
+            "font.sans-serif": ["Aptos"],
             "figure.figsize": (4.5, 3.0),
         }
 
@@ -464,9 +476,10 @@ def update_plot_params(
             "ytick.labelsize": 6,
             "legend.fontsize": 7,
             "image.interpolation": "none",
-            "font.family": "sans-serif",
-            "font.sans-serif": ["DejaVu Sans", "Liberation Sans"],
-            # "font.sans-serif": "DejaVu Sans",
+            # "font.family": "sans-serif",
+            # "font.sans-serif": ["DejaVu Sans", "Liberation Sans"],
+            "font.family": "Aptos",
+            "font.sans-serif": ["Aptos"],
             "figure.figsize": (4.5, 3.0),
         }
     elif style == "thesis":
@@ -506,8 +519,10 @@ def update_plot_params(
                     "text.usetex": usetex,
                     "text.latex.preamble": "",
                     "mathtext.default": "regular",
-                    "font.family": "sans-serif",
-                    "font.sans-serif": ["Liberation Sans"],
+                    # "font.family": "sans-serif",
+                    # "font.sans-serif": ["Liberation Sans"],
+                    "font.family": "Aptos",
+                    "font.sans-serif": ["Aptos"],
                 }
             )
 
@@ -544,6 +559,18 @@ def update_plot_params(
             ),
         }
     )
+    plt.rcParams.update({
+        "font.family": "Aptos",
+        "font.sans-serif": ["Aptos"],
+        "font.serif": ["Aptos"],
+        "font.cursive": ["Aptos"],
+        "font.fantasy": ["Aptos"],
+        "mathtext.fontset": "custom",
+        "mathtext.rm": "Aptos",
+        "mathtext.it": "Aptos:italic",
+        "mathtext.bf": "Aptos:bold",
+        "mathtext.cal": "Aptos",
+    })
     plt.rcParams.update(**kwargs)
 
 
@@ -682,6 +709,204 @@ def add_colorbar(
     return cbar
 
 
+def make_colorwheel(ax, cmap="jch_max"):
+    """
+    Create a colorwheel in the given axis showing phase and magnitude
+    encoding.
+
+    This is the generic function that creates a colorwheel in any
+    matplotlib axis. Use this when you want to create a standalone
+    colorwheel (e.g., shared legend for multiple subplots).
+
+    Args:
+        ax (matplotlib.axes.Axes): the axis to create the colorwheel in.
+        cmap (str, optional): the colormap name. For 2D colormaps
+            ('jch_max', 'jch_const'), magnitude is encoded. For 1D
+            colormaps (e.g., 'hsv', 'twilight'), only phase is shown.
+            Defaults to 'jch_max'.
+
+    Returns:
+        matplotlib.axes.Axes: the axis containing the colorwheel.
+    """
+
+    # determine if this is a 2D colormap that encodes magnitude
+    is_2d_colormap = cmap in AVAILABLE_2D_CMAPS
+
+    # create grid in Cartesian coordinates
+    n = 256
+    x = np.linspace(-1, 1, n)
+    y = np.linspace(-1, 1, n)
+    X, Y = np.meshgrid(x, y)
+
+    # convert to polar: angle and radius
+    theta = np.arctan2(
+        Y, X
+    )  # angle: 0 at right, pi/2 at top, ±pi at left, -pi/2 at bottom
+    radius = np.sqrt(X**2 + Y**2)  # distance from center
+
+    # create mask for circular region
+    mask = radius <= 1.0
+
+    if is_2d_colormap:
+        # for 2D colormaps: encode magnitude as
+        # 1 - radius (center=bright, edge=dark)
+        magnitude = np.where(mask, 1.0 - radius, 0)
+        wheel_complex = magnitude * np.exp(1j * theta)
+        # convert to RGB using the 2D colormap
+        wheel_rgb = complex_to_rgb(wheel_complex, cmap=cmap)
+    else:
+        # for 1D colormaps: constant magnitude, only phase varies
+        wheel_complex = np.where(mask, np.exp(1j * theta), 0)
+        # use matplotlib's standard colormaps for phase only
+
+        # normalize phase from [-pi, pi] to [0, 1]
+        phase_normalized = (theta + np.pi) / (2 * np.pi)
+        colormap = cm.get_cmap(cmap)
+        wheel_rgb = colormap(phase_normalized)[
+            :, :, :3
+        ]  # Remove alpha channel
+
+    # mask out the area outside the circle (make it transparent/white)
+    wheel_rgb[~mask] = 1.0  # white background outside circle
+
+    # display the colorwheel
+    ax.imshow(
+        wheel_rgb,
+        origin="lower",
+        extent=[-1, 1, -1, 1],
+        interpolation="bilinear",
+    )
+    ax.set_xlim(-1.4, 1.4)
+    ax.set_ylim(-1.4, 1.4)
+
+    # add ticks and labels at cardinal directions (phase)
+    tick_positions = [
+        (1.0, 0, 1.1, 0, "0", 1.15),  # right
+        (0, 1.0, 0, 1.1, r"$\pi/2$", 1.15),  # top
+        (-1.0, 0, -1.1, 0, r"$\pm\pi$", 1.25),  # left (extra spacing)
+        (0, -1.0, 0, -1.1, r"$-\pi/2$", 1.15),  # bottom
+    ]
+
+    for x_start, y_start, x_end, y_end, label, label_offset in tick_positions:
+        # draw tick line
+        ax.plot([x_start, x_end], [y_start, y_end], "k-", lw=1)
+
+        # add label outside the tick with custom offset for left label
+        label_x = x_end * label_offset
+        label_y = y_end * label_offset
+        ax.text(label_x, label_y, label, fontsize=5, ha="center", va="center")
+
+    # add magnitude axis only for 2D colormaps
+    if is_2d_colormap:
+        # magnitude axis at 45 degrees (diagonal from center to top-right)
+        # 45 degrees means equal x and y components
+        angle_rad = np.pi / 4  # 45 degrees in radians
+        cos_angle = np.cos(angle_rad)  # sqrt(2)/2
+        sin_angle = np.sin(angle_rad)  # sqrt(2)/2
+
+        # draw magnitude axis from center to edge at 45 degrees
+        ax.plot([0, cos_angle], [0, sin_angle], "k-", lw=0.5, zorder=10)
+
+        # add tick marks and labels for magnitude
+        mag_ticks = [0, 0.25, 0.5, 0.75, 1.0]
+        for tick_val in mag_ticks:
+            # Position along the 45-degree line
+            tick_x = tick_val * cos_angle
+            tick_y = tick_val * sin_angle
+
+            # perpendicular direction (rotate 90 degrees): (-sin, cos)
+            perp_x = -sin_angle * 0.05
+            perp_y = cos_angle * 0.05
+
+            # draw small tick mark perpendicular to the axis
+            ax.plot(
+                [tick_x - perp_x, tick_x + perp_x],
+                [tick_y - perp_y, tick_y + perp_y],
+                "k-",
+                lw=0.4,
+                zorder=10,
+            )
+
+        # add labels at min and max positions
+        # "max" label at center
+        tick_x = 0
+        tick_y = 0
+        label_offset_x = tick_x - sin_angle * 0.15
+        label_offset_y = tick_y - cos_angle * 0.15
+        ax.text(
+            label_offset_x,
+            label_offset_y,
+            "max",
+            fontsize=4,
+            ha="center",
+            va="top",
+        )
+
+        # "min" label positioned outside the colorwheel (beyond the edge)
+        tick_x = 1.0 * cos_angle
+        tick_y = 1.0 * sin_angle
+        # move label further along the 45-degree direction, outside the circle
+        label_offset_x = tick_x + cos_angle * 0.15
+        label_offset_y = tick_y + sin_angle * 0.15
+        ax.text(
+            label_offset_x,
+            label_offset_y,
+            "min",
+            fontsize=4,
+            ha="left",
+            va="bottom",
+        )
+
+    ax.set_aspect("equal")
+    ax.axis("off")
+
+    return ax
+
+
+def add_colorwheel(
+    ax: plt.Axes,
+    cmap: str = "jch_max",
+    title: str | None = None,
+    size: float = 0.25,
+    pad: float = 0.05,
+):
+    """
+    Add a 2D colorwheel legend as an inset to an axis showing phase
+    and magnitude encoding.
+
+    This function creates an inset axis next to the given axis and draws
+    the colorwheel in it. Use this for adding a colorwheel legend to
+    individual plots.
+
+    Args:
+        ax (matplotlib.axes.Axes): the axis to add the colorwheel to.
+        cmap (str, optional): the colormap name. For 2D colormaps
+            ('jch_max', 'jch_const'), magnitude is encoded. For 1D
+            colormaps (e.g., 'hsv', 'twilight'), only phase is shown.
+            Defaults to 'jch_max'.
+        size (float, optional): size of the colorwheel relative to the
+            parent axis (0-1). Defaults to 0.25.
+        pad (float, optional): padding between the axis and colorwheel.
+            Defaults to 0.05.
+
+    Returns:
+        matplotlib.axes.Axes: the inset axes containing the colorwheel.
+    """
+
+    # create inset axis on the right side
+    axins = inset_axes(
+        ax,
+        width=f"{size * 100}%",
+        height=f"{size * 100}%",
+        loc="center left",
+        bbox_to_anchor=(1 + pad, 0.0, 1, 1),
+        bbox_transform=ax.transAxes,
+        borderpad=0,
+    )
+    make_colorwheel(axins, cmap=cmap)
+    return axins
+
+
 def two_spine_frameless_ax(
     ax: plt.Axes, left_spine_pos: float, bottom_spine_pos: float
 ) -> None:
@@ -733,24 +958,3 @@ def white_interior_ticks_labels(
     ax.yaxis.set_major_locator(mticker.FixedLocator(yticks_loc))
     ax.set_xticklabels(xlabels)
     ax.set_yticklabels(ylabels)
-
-
-class MathTextSciFormatter(mticker.Formatter):
-    def __init__(self, fmt="%1.2e"):
-        self.fmt = fmt
-
-    def __call__(self, x, pos=None):
-        s = self.fmt % x
-        decimal_point = "."
-        positive_sign = "+"
-        tup = s.split("e")
-        significand = tup[0].rstrip(decimal_point)
-        sign = tup[1][0].replace(positive_sign, "")
-        exponent = tup[1][1:].lstrip("0")
-        if exponent:
-            exponent = f"10^{sign, exponent}"
-        if significand and exponent:
-            s = rf"{significand}\times{exponent}"
-        else:
-            s = rf"{significand, exponent}"
-        return f"${s}$"
