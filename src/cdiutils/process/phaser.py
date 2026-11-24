@@ -1130,10 +1130,13 @@ class PhasingResultAnalyser:
             for f in glob.glob(self.result_dir_path + "/candidate_*.cxi"):
                 os.remove(f)
             printout_list = [
-                str(extract_run_info(f)[0]).zfill(2)
+                str(int(extract_run_info(f)[0]))
                 for f in self.best_candidates
             ]
-            print(f"[INFO] Best candidates selected:\n{printout_list}")
+            print(
+                f"[INFO] Best candidates selected:\n"
+                f"[{', '.join(printout_list)}]"
+            )
             for i, f in enumerate(self.best_candidates):
                 dir_name, file_name = os.path.split(f)
                 run_nb = str(extract_run_info(file_name)[0]).zfill(2)
@@ -1247,7 +1250,7 @@ class PhasingResultAnalyser:
             for i in range(3):
                 rcp_im = axes[0, i].matshow(
                     np.sum(reciprocal_space_data, axis=i),
-                    cmap="turbo",
+                    cmap="inferno",
                     norm=LogNorm(1),
                 )
                 if plot_phase:
@@ -1256,7 +1259,7 @@ class PhasingResultAnalyser:
                         vmin=-np.pi,
                         vmax=np.pi,
                         alpha=normalised_direct_space_amplitude[slices[i]],
-                        cmap="cet_CET_C9s_r",
+                        cmap="coolwarm",
                     )
                 else:
                     direct_space_im = axes[1, i].matshow(

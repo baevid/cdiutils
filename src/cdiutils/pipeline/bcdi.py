@@ -10,6 +10,7 @@ import copy
 import glob
 import os
 import subprocess
+import logging
 from string import Template
 
 # Dependencies.
@@ -1481,6 +1482,7 @@ retrieval is also computed and will be used in the post-processing stage."""
         clear_former_results: bool = False,
         cmd: str = None,
         search_pattern: str = "*Run*.cxi",
+        verbose: bool = True,
         **pynx_params,
     ) -> None:
         """
@@ -1503,6 +1505,9 @@ retrieval is also computed and will be used in the post-processing stage."""
                 inputs.txt").
             search_pattern (str, optional): glob pattern for finding
                 result CXI files. Defaults to "*Run*.cxi".
+            verbose (bool, optional): whether to display INFO-level PyNX
+                output in the console. Output is always saved to the
+                process log file. Defaults to True.
             **pynx_params: PyNX parameters (e.g., nb_run, nb_raar,
                 support_threshold). Override defaults.
 
@@ -1545,26 +1550,51 @@ retrieval is also computed and will be used in the post-processing stage."""
             for key, value in self.params["pynx"].items():
                 file.write(f"{key} = {value}\n")
 
-        if jump_to_cluster:
-            self.logger.info("Jumping to cluster requested.")
-            self._make_slurm_file(pynx_slurm_file_template)
-            job_id, output_file = self.submit_job(
-                job_file="pynx-id01-cdi.slurm",
-                working_dir=self.pynx_phasing_dir,
-            )
-            self.monitor_job(job_id, output_file)
-
-        else:
-            self.logger.info(
-                "Assuming the current machine is running PyNX. Will run the "
-                "provided command."
-            )
-            if cmd is None:
-                cmd = "pynx-cdi-id01 pynx-cdi-inputs.txt"
-                self.logger.info(
-                    f"No command provided. Will use the default: {cmd}"
+        # Temporarily adjust console logging during PyNX execution.
+        # File handlers are deliberately left unchanged.
+        console_handlers = [
+            handler
+            for handler in self.logger.handlers
+            if isinstance(handler, logging.StreamHandler)
+            and not isinstance(handler, logging.FileHandler)
+        ]
+        
+        original_levels = {
+            handler: handler.level for handler in console_handlers
+        }
+        
+        try:
+            for handler in console_handlers:
+                handler.setLevel(
+                    logging.INFO if verbose else logging.WARNING
                 )
-            self._run_cmd(cmd, self.pynx_phasing_dir)
+        
+            if jump_to_cluster:
+                self.logger.info("Jumping to cluster requested.")
+                self._make_slurm_file(pynx_slurm_file_template)
+                job_id, output_file = self.submit_job(
+                    job_file="pynx-id01-cdi.slurm",
+                    working_dir=self.pynx_phasing_dir,
+                )
+                self.monitor_job(job_id, output_file)
+        
+            else:
+                self.logger.info(
+                    "Assuming the current machine is running PyNX. "
+                    "Will run the provided command."
+                )
+                if cmd is None:
+                    cmd = "pynx-cdi-id01 pynx-cdi-inputs.txt"
+                    self.logger.info(
+                        f"No command provided. Will use the default: {cmd}"
+                    )
+        
+                self._run_cmd(cmd, self.pynx_phasing_dir)
+        
+        finally:
+            # Restore original console logging levels.
+            for handler, level in original_levels.items():
+                handler.setLevel(level)
 
     @staticmethod
     def _merge_pynx_params(user_pynx_params: dict) -> dict:
@@ -1971,14 +2001,64 @@ reconstruction (best solution).""",
                 - 'flip': flip reconstruction (complex conjugate)
                 - 'convention': 'xu' or 'cxi'
                 - 'handle_defects': enable defect-aware processing
+                - 'amplitude_morph_close': apply morphological closing
+                  to the reconstruction amplitude and support
+                - 'amplitude_morph_close_size': size of the structuring
+                  element used for morphological closing (voxels)
+                - 'amplitude_vmin', 'amplitude_vmax': amplitude plot limits
+                - 'phase_vmin', 'phase_vmax': phase plot limits
+                - 'displacement_vmin', 'displacement_vmax': displacement
+                  plot limits
+                - 'strain_vmin', 'strain_vmax': heterogeneous strain
+                  plot limits
+                - 'lattice_parameter_vmin', 'lattice_parameter_vmax':
+                  lattice parameter plot limits
+                - 'shear_vmin', 'shear_vmax': shear displacement plot limits
+                - 'strain_histogram_vmin', 'strain_histogram_vmax':
+                  strain histogram axis limits
 
         Side effects:
             Updates instance attributes: reconstruction, structural_
-            props, extra_info. Generates amplitude distribution plot.
+            props, extra_info. Generates postprocessing plots.
 
         Raises:
             ValueError: if unrecognised parameter provided.
         """
+
+        # Extract optional colour-bar limits
+        plot_limits = {
+            "amplitude": (
+                params.pop("amplitude_vmin", None),
+                params.pop("amplitude_vmax", None),
+            ),
+            "phase": (
+                params.pop("phase_vmin", None),
+                params.pop("phase_vmax", None),
+            ),
+            "displacement": (
+                params.pop("displacement_vmin", None),
+                params.pop("displacement_vmax", None),
+            ),
+            "het_strain": (
+                params.pop("strain_vmin", None),
+                params.pop("strain_vmax", None),
+            ),
+            "lattice_parameter": (
+                params.pop("lattice_parameter_vmin", None),
+                params.pop("lattice_parameter_vmax", None),
+            ),
+            "shear": (
+                params.pop("shear_vmin", None),
+                params.pop("shear_vmax", None),
+            ),
+            "strain_histogram": (
+                params.pop("strain_histogram_vmin", None),
+                params.pop("strain_histogram_vmax", None),
+            ),
+        }
+        shear_vmin, shear_vmax = plot_limits["shear"]
+        strain_vmin, strain_vmax = plot_limits["het_strain"]
+        strain_histogram_vmin, strain_histogram_vmax = plot_limits["strain_histogram"]
         _path = f"{self.dump_dir}S{self.scan}_preprocessed_data.cxi"
         # Whether to reload the pre-processing .cxi file.
         if self.q_lab_pos.get("ref") is None or self.converter is None:
@@ -2021,25 +2101,32 @@ reconstruction (best solution).""",
         if self.params["convention"].lower() == "cxi":
             self.reconstruction = Geometry.swap_convention(self.reconstruction)
 
-        # Apply morphological closing to the reconstruction amplitude
+        # Apply morphological closing to the reconstruction amplitude and support
         if self.params["amplitude_morph_close"]:
             self.logger.info(
                 "Applying morphological closing to the reconstruction amplitude "
-                f"with size {self.params['amplitude_morph_close_size']}."
+                f"and support with size "
+                f"{self.params['amplitude_morph_close_size']}."
             )
 
+            structure = np.ones(
+                (
+                    self.params["amplitude_morph_close_size"],
+                ) * self.reconstruction.ndim,
+                dtype=bool,
+            )
+
+            # Preserve the original phase while closing the amplitude.
             amplitude = np.abs(self.reconstruction)
             phase = np.angle(self.reconstruction)
 
             amplitude = ndi.grey_closing(
                 amplitude,
-                size=(
-                    self.params["amplitude_morph_close_size"],
-                ) * amplitude.ndim,
+                footprint=structure,
             )
 
             self.reconstruction = amplitude * np.exp(1j * phase)
-
+            
         self.logger.info(
             f"Voxel size finally used is: {self.params['voxel_size']} nm in "
             f"the {self.params['convention'].upper()} convention."
@@ -2117,6 +2204,8 @@ reconstruction (best solution).""",
             phase_factor=-1,  # it came out of pynx.cdi
             handle_defects=self.params["handle_defects"],
             output_shape=self.params["output_shape"],
+            support_morph_close=self.params["amplitude_morph_close"],
+            support_morph_close_size=self.params["amplitude_morph_close_size"],
         )
         self.logger.info(
             f"The final output array size is {self.structural_props['amplitude'].shape} with an interpolated voxel size (nm) of {self.structural_props['voxel_size']}"
@@ -2137,11 +2226,12 @@ reconstruction (best solution).""",
         # final frame
         dump_file_tmpl = f"{self.dump_dir}/S{self.scan}_" + "{}.png"
         sample_scan = f"{self.sample_name}, S{self.scan}"
+        support = self.structural_props["support"].astype(bool)
         self.extra_info["averaged_lattice_parameter"] = np.nanmean(
-            self.structural_props["lattice_parameter"]
+            self.structural_props["lattice_parameter"][support]
         )
         self.extra_info["averaged_dspacing"] = np.nanmean(
-            self.structural_props["dspacing"]
+            self.structural_props["dspacing"][support]
         )
         table_info = {
             "Isosurface": self.params["isosurface"],
@@ -2157,6 +2247,7 @@ reconstruction (best solution).""",
             voxel_size=self.params["voxel_size"],
             convention=self.params["convention"],
             save=dump_file_tmpl.format("summary_plot"),
+            plot_limits=plot_limits,
             **to_plot,
         )
         PipelinePlotter.summary_plot(
@@ -2165,6 +2256,11 @@ reconstruction (best solution).""",
             voxel_size=self.params["voxel_size"],
             convention=self.params["convention"],
             save=dump_file_tmpl.format("strain_methods"),
+            plot_limits={
+                "het_strain": plot_limits["het_strain"],
+                "het_strain_from_dspacing": plot_limits["het_strain"],
+                "het_strain_with_ramp": plot_limits["het_strain"],
+            },
             **{
                 k: self.structural_props[k]
                 for k in [
@@ -2187,17 +2283,18 @@ reconstruction (best solution).""",
             titles[i]: self.structural_props["displacement_gradient"][i]
             for i in range(3)
         }
-        ptp_value = np.nanmax(
-            self.structural_props["displacement_gradient"][0]
-        ) - np.nanmin(self.structural_props["displacement_gradient"][0])
+        support = self.structural_props["support"].astype(bool)
+        displacement_gradient = self.structural_props["displacement_gradient"][0]
+        gradient_values = displacement_gradient[support]
+        ptp_value = np.nanmax(gradient_values) - np.nanmin(gradient_values)
         PipelinePlotter.summary_plot(
             title=f"Shear displacement, {sample_scan}",
             support=self.structural_props["support"],
             voxel_size=self.params["voxel_size"],
             convention=self.params["convention"],
             save=dump_file_tmpl.format("shear_displacement"),
-            unique_vmin=-ptp_value / 2,
-            unique_vmax=ptp_value / 2,
+            unique_vmin=(shear_vmin if shear_vmin is not None else -ptp_value / 2),
+            unique_vmax=(shear_vmax if shear_vmax is not None else ptp_value / 2),
             cmap=RED_TO_TEAL,
             **displacement_gradient_plots,
         )
@@ -2206,17 +2303,25 @@ reconstruction (best solution).""",
             self.structural_props["support"],
             title=f"Strain statistics, {sample_scan}",
             save=dump_file_tmpl.format("strain_statistics"),
+            xlim=(
+                strain_histogram_vmin,
+                strain_histogram_vmax,
+            ) if strain_histogram_vmin is not None and strain_histogram_vmax is not None else None,
         )
         self.extra_info["strain_means"] = means
         self.extra_info["strain_fwhms"] = fwhms
+        strain = self.structural_props["het_strain"]
+        strain_values = strain[support]
+        strain_limit = np.nanmax(np.abs(strain_values))
         plot_3d_surface_projections(
-            data=self.structural_props["het_strain"],
+            data=strain,
             support=self.structural_props["support"],
             voxel_size=self.params["voxel_size"],
             convention=self.params["convention"],
-            cmap="cet_CET_D13",
-            vmin=-np.nanmax(np.abs(self.structural_props["het_strain"])),
-            vmax=np.nanmax(np.abs(self.structural_props["het_strain"])),
+            # cmap="cet_CET_D13",
+            cmap="fast",
+            vmin=strain_vmin if strain_vmin is not None else -strain_limit,
+            vmax=strain_vmax if strain_vmax is not None else strain_limit,
             cbar_title=r"Strain (%)",
             title=f"3D views of the strain, {sample_scan}",
             save=dump_file_tmpl.format("3d_strain_views"),
@@ -2469,6 +2574,8 @@ reconstruction (best solution).""",
             # add the dspacing average and lattice constant average around
             # the NP to avoid nan values that are annoying for 3D
             # visualisation
+            support = self.structural_props["support"].astype(bool)
+            
             for k in (
                 "het_strain",
                 "het_strain_from_dspacing",
@@ -2476,9 +2583,11 @@ reconstruction (best solution).""",
                 "lattice_parameter",
                 "displacement",
             ):
+                mean_value = np.nanmean(to_save_as_vti[k][support])
+            
                 to_save_as_vti[k] = np.where(
                     np.isnan(to_save_as_vti[k]),
-                    np.nanmean(to_save_as_vti[k]),
+                    mean_value,
                     to_save_as_vti[k],
                 )
 
@@ -2545,7 +2654,8 @@ reconstruction (best solution).""",
             loaded_data,
             voxel_size=loaded_voxel_size,
             initial_quantity="het_strain_from_dspacing",
-            cmap="cet_CET_D13",
+            # cmap="cet_CET_D13",
+            cmap="fast",
             vmin=vmin,
             vmax=vmax,
         )

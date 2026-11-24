@@ -194,12 +194,12 @@ def plot_3d_isosurface(
 
     # set initial colourmap
     if cmap is None:
-        initial_cmap = "viridis"
+        initial_cmap = "fast"
     else:
         initial_cmap = cmap
 
     # create initial isosurface using shared helper
-    isosurface_default = 0.5
+    isosurface_default = 0.1
 
     # handle NaN values in amplitude when calculating threshold
     amplitude_max = np.nanmax(amplitude)
@@ -302,6 +302,9 @@ def plot_3d_isosurface(
         "Purples",
         "Oranges",
         "Reds",
+        "fast",
+        "parula",
+        "RdBu_r",
         "cet_CET_D13",
         "cet_CET_C9s_r",
         "cet_CET_D1A",
@@ -318,26 +321,26 @@ def plot_3d_isosurface(
     # Colorbar control checkboxes and inputs
     set_limits_checkbox = Checkbox(
         value=False,
-        description="Set limits:",
-        tooltip="Enable manual colorbar limits",
+        description="Manual colour limits:",
+        tooltip="Enable manual colourbar limits",
         indent=False,
-        style={"description_width": "80px"},
+        style={"description_width": "initial"},
     )
-
+    
     vmin_input = FloatText(
         value=initial_vmin,
         description="vmin:",
-        disabled=True,  # disabled by default
-        style={"description_width": "50px"},
-        layout={"width": "150px"},
+        disabled=True,
+        style={"description_width": "40px"},
+        layout={"width": "130px"},
     )
-
+    
     vmax_input = FloatText(
         value=initial_vmax,
         description="vmax:",
-        disabled=True,  # disabled by default
-        style={"description_width": "50px"},
-        layout={"width": "150px"},
+        disabled=True,
+        style={"description_width": "40px"},
+        layout={"width": "130px"},
     )
 
     symmetric_checkbox = Checkbox(
@@ -370,6 +373,10 @@ def plot_3d_isosurface(
         else:
             vmin_input.disabled = True
             vmax_input.disabled = True
+            
+    def toggle_symmetric(change=None):
+        if symmetric_checkbox.value:
+            set_limits_checkbox.value = False
 
     def update_mesh(change=None) -> None:
         """
@@ -425,8 +432,11 @@ def plot_3d_isosurface(
             vmax_input.value = vmax
         elif set_limits_checkbox.value:
             # use manual limits from input fields
-            vmin = vmin_input.value
-            vmax = vmax_input.value
+            vmin = float(vmin_input.value)
+            vmax = float(vmax_input.value)
+        
+            if vmin >= vmax:
+                return
         else:
             # default: auto-scale to actual data range, handle NaN
             vmin = float(np.nanmin(quantity_at_verts))
@@ -465,6 +475,7 @@ def plot_3d_isosurface(
     set_limits_checkbox.observe(update_mesh, names="value")
     vmin_input.observe(update_mesh, names="value")
     vmax_input.observe(update_mesh, names="value")
+    symmetric_checkbox.observe(toggle_symmetric, names="value")
     symmetric_checkbox.observe(update_mesh, names="value")
     replace_nan_checkbox.observe(update_mesh, names="value")
 

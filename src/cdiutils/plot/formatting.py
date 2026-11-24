@@ -1,5 +1,5 @@
 import warnings
-
+import sys
 import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
@@ -8,9 +8,17 @@ from cycler import cycler
 from matplotlib import cm
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
+from pathlib import Path
+from matplotlib import font_manager
 
 from cdiutils.plot.colormap import AVAILABLE_2D_CMAPS, complex_to_rgb
 
+FONT_DIR = Path(sys.prefix) / "fonts"
+
+if FONT_DIR.exists():
+    for font_file in FONT_DIR.glob("Aptos*.ttf"):
+        font_manager.fontManager.addfont(str(font_file))
+    
 # Planes are given with the indexing convention,
 # i.e. [n, m] -> x-axis = m, y-axis = n
 CXI_VIEW_PARAMETERS = {
@@ -364,25 +372,27 @@ def set_plot_configs():
         },
         "intensity": {
             "title": "Intensity (a.u.)",
-            "cmap": "turbo",
+            "cmap": "inferno",
             "vmin": 0,
             "vmax": None,
         },
         "phase": {
             "title": "Phase (rad)",
-            "cmap": "cet_CET_C9s_r",
+            # "cmap": "cet_CET_C9s_r",
+            "cmap": "coolwarm",
             "vmin": -np.pi,
             "vmax": np.pi,
         },
         "displacement": {
             "title": rf"Displacement ({ANGSTROM_SYMBOL})",
-            "cmap": "cet_CET_D1A",
+            # "cmap": "cet_CET_D1A",
+            "cmap": "RdBu_r",
             "vmin": -0.1,
             "vmax": 0.1,
         },
         "strain": {
             "title": rf"Strain ({PERCENT_SYMBOL})",
-            "cmap": "cet_CET_D13",
+            "cmap": "fast",
             "vmin": -0.05,
             "vmax": 0.05,
         },
@@ -400,7 +410,7 @@ def set_plot_configs():
         },
         "lattice_parameter": {
             "title": rf"Lattice parameter ({ANGSTROM_SYMBOL})",
-            "cmap": "turbo",
+            "cmap": "parula",
             "vmin": None,
             "vmax": None,
         },
@@ -430,24 +440,26 @@ def update_plot_params(
     use_siunitx: bool = True,
     **kwargs,
 ) -> None:
-    """Update the matplotlib plot parameters to plublication style"""
+    """Update the matplotlib plot parameters to publication style"""
 
     if style is None:
         # the default style
         parameters = {
             "lines.linewidth": 1,
             "lines.markersize": 1,
-            "figure.titlesize": 7,
-            "font.size": 6,
+            "figure.titlesize": 9,
+            "font.size": 8,
             "svg.fonttype": "none",
-            "axes.titlesize": 6,
-            "axes.labelsize": 6,
-            "xtick.labelsize": 5,
-            "ytick.labelsize": 5,
-            "legend.fontsize": 6,
+            "axes.titlesize": 8,
+            "axes.labelsize": 8,
+            "xtick.labelsize": 7,
+            "ytick.labelsize": 7,
+            "legend.fontsize": 8,
             "image.interpolation": "none",
-            "font.family": "sans-serif",
-            "font.sans-serif": ["DejaVu Sans", "Liberation Sans"],
+            # "font.family": "sans-serif",
+            # "font.sans-serif": ["DejaVu Sans", "Liberation Sans"],
+            "font.family": "Aptos",
+            "font.sans-serif": ["Aptos"],
             "figure.figsize": (4.5, 3.0),
         }
 
@@ -464,8 +476,10 @@ def update_plot_params(
             "ytick.labelsize": 6,
             "legend.fontsize": 7,
             "image.interpolation": "none",
-            "font.family": "sans-serif",
-            "font.sans-serif": ["DejaVu Sans", "Liberation Sans"],
+            # "font.family": "sans-serif",
+            # "font.sans-serif": ["DejaVu Sans", "Liberation Sans"],
+            "font.family": "Aptos",
+            "font.sans-serif": ["Aptos"],
             "figure.figsize": (4.5, 3.0),
         }
     elif style == "thesis":
@@ -505,8 +519,10 @@ def update_plot_params(
                     "text.usetex": usetex,
                     "text.latex.preamble": "",
                     "mathtext.default": "regular",
-                    "font.family": "sans-serif",
-                    "font.sans-serif": ["Liberation Sans"],
+                    # "font.family": "sans-serif",
+                    # "font.sans-serif": ["Liberation Sans"],
+                    "font.family": "Aptos",
+                    "font.sans-serif": ["Aptos"],
                 }
             )
 
@@ -543,6 +559,18 @@ def update_plot_params(
             ),
         }
     )
+    plt.rcParams.update({
+        "font.family": "Aptos",
+        "font.sans-serif": ["Aptos"],
+        "font.serif": ["Aptos"],
+        "font.cursive": ["Aptos"],
+        "font.fantasy": ["Aptos"],
+        "mathtext.fontset": "custom",
+        "mathtext.rm": "Aptos",
+        "mathtext.it": "Aptos:italic",
+        "mathtext.bf": "Aptos:bold",
+        "mathtext.cal": "Aptos",
+    })
     plt.rcParams.update(**kwargs)
 
 

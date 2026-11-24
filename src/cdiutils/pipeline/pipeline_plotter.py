@@ -1,3 +1,4 @@
+import sys
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.colors import LogNorm, Normalize
@@ -12,7 +13,6 @@ from cdiutils.plot.formatting import (
 )
 from cdiutils.plot.slice import plot_contour, plot_volume_slices
 from cdiutils.utils import num_to_nan, symmetric_pad
-
 
 class PipelinePlotter:
     """
@@ -290,6 +290,7 @@ class PipelinePlotter:
         save: str = None,
         unique_vmin: float = None,
         unique_vmax: float = None,
+        plot_limits: dict = None,
         cmap: str = None,
         figsize: tuple = (6, 4),
         convention: str = "cxi",
@@ -345,35 +346,76 @@ class PipelinePlotter:
                 va="center",
             )
         mappables = {}
+        shape = support.shape if support is not None else None
         support = num_to_nan(support)
         for i, (key, array) in enumerate(to_plot.items()):
             if support is not None and key != "amplitude":
                 array = support * array
-
+                
             if key in PLOT_CONFIGS:
                 cmap = PLOT_CONFIGS[key]["cmap"]
-                # check if vmin and vmax are given | not
-                if unique_vmin is None or unique_vmax is None:
-                    if support is not None:
-                        if key in ("dspacing", "lattice_parameter"):
-                            vmin = np.nanmin(array)
-                            vmax = np.nanmax(array)
-                        elif key == "amplitude":
-                            vmin = 0
-                            vmax = np.nanmax(array)
-                        else:
-                            vmax = np.nanmax(np.abs(array))
-                            vmin = -vmax
+            
+                # Determine default colour-bar limits
+                if support is not None:
+                    if key in ("dspacing", "lattice_parameter"):
+                        vmin = np.nanmin(array)
+                        vmax = np.nanmax(array)
+                    elif key == "amplitude":
+                        vmin = 0
+                        vmax = np.nanmax(array)
                     else:
-                        vmin = PLOT_CONFIGS[key]["vmin"]
-                        vmax = PLOT_CONFIGS[key]["vmax"]
+                        vmax = np.nanmax(np.abs(array))
+                        vmin = -vmax
                 else:
+                    vmin = PLOT_CONFIGS[key]["vmin"]
+                    vmax = PLOT_CONFIGS[key]["vmax"]
+            
+                # Apply quantity-specific colour-bar limits
+                if plot_limits is not None and key in plot_limits:
+                    custom_vmin, custom_vmax = plot_limits[key]
+            
+                    if custom_vmin is not None:
+                        vmin = custom_vmin
+            
+                    if custom_vmax is not None:
+                        vmax = custom_vmax
+            
+                # Preserve backward compatibility with existing unique limits
+                if unique_vmin is not None:
                     vmin = unique_vmin
+                if unique_vmax is not None:
                     vmax = unique_vmax
+            
             else:
                 vmin = unique_vmin
                 vmax = unique_vmax
                 cmap = cmap if cmap else "turbo"
+                
+            # if key in PLOT_CONFIGS:
+            #     cmap = PLOT_CONFIGS[key]["cmap"]
+            #     # check if vmin and vmax are given | not
+            #     if unique_vmin is None or unique_vmax is None:
+            #         if support is not None:
+            #             if key in ("dspacing", "lattice_parameter"):
+            #                 vmin = np.nanmin(array)
+            #                 vmax = np.nanmax(array)
+            #             elif key == "amplitude":
+            #                 vmin = 0
+            #                 vmax = np.nanmax(array)
+            #             else:
+            #                 vmax = np.nanmax(np.abs(array))
+            #                 vmin = -vmax
+            #         else:
+            #             vmin = PLOT_CONFIGS[key]["vmin"]
+            #             vmax = PLOT_CONFIGS[key]["vmax"]
+            #     else:
+            #         vmin = unique_vmin
+            #         vmax = unique_vmax
+            # else:
+            #     vmin = unique_vmin
+            #     vmax = unique_vmax
+            #     cmap = cmap if cmap else "turbo"
+            
             if key == "amplitude":
                 cmap = plt.get_cmap(cmap)
                 cmap.set_bad("#30123bff")
@@ -567,13 +609,18 @@ class PipelinePlotter:
                 im = old_ax.get_images()[0]
                 new_ax.imshow(
                     im.get_array(),
-                    cmap=im.get_cmap(),
+                    cmap = "inferno",
                     norm=im.norm,
                     extent=im.get_extent(),
                     origin=im.origin,
                 )
                 new_ax.axis(old_ax.axis())
 
+        # Match the calculated FFT axis limits to the experimental data
+        for ax_top, ax_bottom in zip(axes[0], axes[1]):
+            ax_top.set_xlim(ax_bottom.get_xlim())
+            ax_top.set_ylim(ax_bottom.get_ylim())
+            
         add_labels(axes[0], space="rcp", convention="xu")
         add_labels(axes[1], space="rcp", convention="xu")
 
@@ -593,6 +640,7 @@ class PipelinePlotter:
         colors: dict = None,
         title: str = "",
         save: str = None,
+        xlim: tuple[float, float] | None = None,
     ) -> tuple[plt.Figure, plt.Axes]:
         """
         Plot a strain statistics graph displaying distribution of strain
@@ -607,6 +655,7 @@ class PipelinePlotter:
                 Defaults to None.
             title (str, optional): the title of the figure.
             save: (str, optional): the path where to save the figure.
+            xlim: tuple[float, float], optional: xlim applied to all subplots.
 
         Returns:
             tuple[plt.Figure, plt.Axes]: the figure and axes.
@@ -752,6 +801,10 @@ class PipelinePlotter:
         )
 
         figure.suptitle(title)
+        # Set x-axis limits for all strain histograms
+        if xlim is not None:
+            for ax in axes.values():
+                ax.set_xlim(xlim)
         if save:
             save_fig(figure, path=save, transparent=False)
 

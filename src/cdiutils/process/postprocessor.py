@@ -9,7 +9,7 @@ import copy
 
 import numpy as np
 from scipy.fft import fftn, fftshift, ifftn, ifftshift
-from scipy.ndimage import binary_erosion
+from scipy.ndimage import binary_erosion, binary_closing
 from skimage.filters import window
 from skimage.restoration import unwrap_phase
 from sklearn.linear_model import LinearRegression
@@ -358,6 +358,8 @@ class PostProcessor:
         handle_defects: bool = False,
         support_parameters: dict = None,
         output_shape: tuple | list = None,
+        support_morph_close: bool = False,
+        support_morph_close_size: int = 3,
     ) -> dict:
         """
         Main method used in the post-processing workflow. The method
@@ -381,7 +383,12 @@ class PostProcessor:
             handle_defects (bool, optional): whether a defect is present
                 in the reconstruction, in this case phasing processing
                 and strain computation is different. Defaults to False.
-
+            support_morph_close (bool, optional): apply binary
+                morphological closing to the generated support mask.
+                Defaults to False.
+            support_morph_close_size (int, optional): size of the
+                structuring element used for morphological closing,
+                in voxels. Defaults to 3.
         Returns:
             dict: the structural properties of the object in the form of
                 a dictionary. Each key corresponds to one quantity of'
@@ -397,6 +404,33 @@ class PostProcessor:
             isosurface=isosurface,
             final_shape=None,
         )
+
+        # Apply binary morphological closing to the support.
+        if support_morph_close:
+            if (
+                not isinstance(support_morph_close_size, (int, np.integer))
+                or support_morph_close_size < 1
+            ):
+                raise ValueError(
+                    "support_morph_close_size must be a positive integer."
+                )
+
+            structure = np.ones(
+                (support_morph_close_size,) * complex_object.ndim,
+                dtype=bool,
+            )
+
+            support = binary_closing(
+                support.astype(bool),
+                structure=structure,
+            )
+
+            # Recalculate the surface from the closed support.
+            bulk = binary_erosion(support)
+            surface = support & ~bulk
+
+            support = support.astype(np.uint8)
+            surface = surface.astype(np.uint8)
 
         if output_shape is not None:
             output_shape = tuple(output_shape)
@@ -444,14 +478,21 @@ class PostProcessor:
             surface = fit_shape(surface, output_shape)
 
 
-        # extract phase and amplitude
+        # Extract phase and amplitude from the full reconstruction.
         amplitude = np.abs(complex_object)
         phase = np.angle(complex_object) * phase_factor
-
-        support = zero_to_nan(support)  # 0 values must be nan now
-        phase = cls.unwrap_phase(phase, support)
-        phase = phase * support
-        phase_with_ramp = phase.copy()  # save the 'ramped' phase for later
+        
+        # Preserve binary support and surface masks for downstream analysis.
+        support = support.astype(bool)
+        surface = surface.astype(bool)
+        
+        # Unwrap phase across the entire array.
+        phase = cls.unwrap_phase(phase)
+        
+        # Preserve the phase with its original ramp.
+        phase_with_ramp = phase.copy()
+        
+        # Remove phase ramp and offset.
         phase = cls.remove_phase_ramp(phase)
         phase = cls.phase_offset_to_zero(phase)
 
@@ -462,45 +503,37 @@ class PostProcessor:
         )
 
         if handle_defects:
-            het_strain_with_ramp = np.zeros(amplitude.shape)
-            displacement_gradient = np.zeros((3,) + amplitude.shape)
-            phases = [
-                np.mod(phase_with_ramp * support + i * (np.pi / 2), 2 * np.pi)
-                for i in range(3)
-            ]
-            strains = [
-                cls.get_het_normal_strain(
-                    cls.get_displacement(phases[i], g_vector) * 1e-1,
-                    g_vector,
-                    voxel_size,
-                    gradient_method="hybrid",
-                )
-                for i in range(3)
-            ]
-            displacement_gradients = [
-                cls.get_displacement_gradient(
-                    cls.get_displacement(phases[i], g_vector) * 1e-1,
-                    voxel_size,
-                    gradient_method="hybrid",
-                )
-                for i in range(3)
-            ]
-            for i in range(3):
-                # strain case
-                mask = np.isclose(strains[i % 3], strains[(i + 1) % 3])
-                het_strain_with_ramp[mask == 1] = strains[i][mask == 1]
+            # Calculate the complex exponential of the phase.
+            complex_phase = np.exp(1j * phase_with_ramp)
+        
+            # Calculate spatial derivatives of the complex exponential.
+            complex_gradient = np.gradient(
+                complex_phase,
+                *voxel_size,
+            )
+        
+            # Recover the phase gradients.
+            phase_gradient = np.array([
+                np.real(gradient / (1j * complex_phase))
+                for gradient in complex_gradient
+            ])
+        
+            # Calculate heterogeneous strain by projecting the phase
+            # gradient onto the Bragg vector.
+            g_vector_nm = np.asarray(g_vector) * 10
+            het_strain_with_ramp = (
+                np.einsum("i,i...->...", g_vector_nm, phase_gradient)
+                / np.linalg.norm(g_vector_nm) ** 2
+            )
+        
+            # Calculate the displacement gradient from the complex-exponential
+            # phase gradient.
+            displacement_gradient = (
+                phase_gradient / np.linalg.norm(g_vector)
+            ) * 1e-1
 
-                # displacement gradient case
-                for k in range(3):
-                    mask = np.isclose(
-                        displacement_gradients[k][i % 3],
-                        displacement_gradients[k][(i + 3) % 3],
-                    )
-                    displacement_gradient[k][mask == 1] = (
-                        displacement_gradients[k][i][mask == 1]
-                    )
             numpy_het_strain = np.array([np.nan])
-
+        
         else:
             # compute the various strain quantities
             numpy_het_strain = cls.get_het_normal_strain(
@@ -524,7 +557,9 @@ class PostProcessor:
 
             # compute the displacement gradient
             displacement_gradient = cls.get_displacement_gradient(
-                displacement, voxel_size, gradient_method="hybrid"
+                displacement * 1e-1,
+                voxel_size,
+                gradient_method="hybrid",
             )
 
         # compute the dspacing and lattice_parameter
@@ -534,18 +569,18 @@ class PostProcessor:
         lattice_parameter = (
             np.sqrt(hkl[0] ** 2 + hkl[1] ** 2 + hkl[2] ** 2) * dspacing
         )
-        dspacing_mean = np.nanmean(dspacing)
+        dspacing_mean = np.nanmean(dspacing[support.astype(bool)])
         het_strain_from_dspacing = (dspacing - dspacing_mean) / dspacing_mean
         if handle_defects:
             het_strain = het_strain_from_dspacing.copy()
         # all strains are saved in percent
         return {
             "amplitude": amplitude,
-            "support": nan_to_zero(support),
-            "surface": nan_to_zero(surface),
-            "phase": nan_to_zero(phase),
-            "displacement": nan_to_zero(displacement),
-            "displacement_gradient": nan_to_zero(displacement_gradient),
+            "support": support.astype(np.uint8),
+            "surface": surface.astype(np.uint8),
+            "phase": phase,
+            "displacement": displacement,
+            "displacement_gradient": displacement_gradient,
             "het_strain": nan_to_zero(het_strain) * 100,
             "het_strain_with_ramp": nan_to_zero(het_strain_with_ramp) * 100,
             "het_strain_from_dspacing": nan_to_zero(het_strain_from_dspacing)
