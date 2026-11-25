@@ -12,7 +12,7 @@ from cdiutils.plot.formatting import (
     white_interior_ticks_labels,
 )
 from cdiutils.plot.slice import plot_contour, plot_volume_slices
-from cdiutils.utils import num_to_nan, symmetric_pad
+from cdiutils.utils import num_to_nan, symmetric_pad, normalise
 
 class PipelinePlotter:
     """
@@ -349,6 +349,9 @@ class PipelinePlotter:
         shape = support.shape if support is not None else None
         support = num_to_nan(support)
         for i, (key, array) in enumerate(to_plot.items()):
+            if key == "amplitude":
+                array = normalise(array)
+        
             if support is not None and key != "amplitude":
                 array = support * array
                 
@@ -390,31 +393,6 @@ class PipelinePlotter:
                 vmin = unique_vmin
                 vmax = unique_vmax
                 cmap = cmap if cmap else "turbo"
-                
-            # if key in PLOT_CONFIGS:
-            #     cmap = PLOT_CONFIGS[key]["cmap"]
-            #     # check if vmin and vmax are given | not
-            #     if unique_vmin is None or unique_vmax is None:
-            #         if support is not None:
-            #             if key in ("dspacing", "lattice_parameter"):
-            #                 vmin = np.nanmin(array)
-            #                 vmax = np.nanmax(array)
-            #             elif key == "amplitude":
-            #                 vmin = 0
-            #                 vmax = np.nanmax(array)
-            #             else:
-            #                 vmax = np.nanmax(np.abs(array))
-            #                 vmin = -vmax
-            #         else:
-            #             vmin = PLOT_CONFIGS[key]["vmin"]
-            #             vmax = PLOT_CONFIGS[key]["vmax"]
-            #     else:
-            #         vmin = unique_vmin
-            #         vmax = unique_vmax
-            # else:
-            #     vmin = unique_vmin
-            #     vmax = unique_vmax
-            #     cmap = cmap if cmap else "turbo"
             
             if key == "amplitude":
                 cmap = plt.get_cmap(cmap)
