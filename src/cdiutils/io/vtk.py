@@ -97,3 +97,60 @@ def save_as_vti(
     writer.SetFileName(output_path)
     writer.SetInputData(image_data)
     writer.Write()
+
+
+def save_as_vtp(
+    output_path: str,
+    q_direction: np.ndarray,
+    length: float = 100.0,
+    origin: tuple = (0, 0, 0),
+) -> None:
+    """Save a q-vector as a 3D arrow in a VTP file."""
+    if not IS_VTK_AVAILABLE:
+        raise VtkImportError
+
+    q_direction = np.asarray(q_direction, dtype=float)
+    norm = np.linalg.norm(q_direction)
+
+    if norm == 0:
+        raise ValueError("q_direction cannot be zero.")
+
+    q_direction /= norm
+
+    start = np.asarray(origin, dtype=float)
+    end = start + length * q_direction
+
+    # Create the arrow along the x-axis by default.
+    arrow_source = vtk.vtkArrowSource()
+    arrow_source.SetTipLength(0.25)
+    arrow_source.SetTipRadius(0.08)
+    arrow_source.SetShaftRadius(0.025)
+
+    # Orient the arrow from the x-axis towards q_direction.
+    transform = vtk.vtkTransform()
+    transform.Translate(*start)
+
+    x_axis = np.array([1.0, 0.0, 0.0])
+    rotation_axis = np.cross(x_axis, q_direction)
+    rotation_angle = np.degrees(
+        np.arccos(np.clip(np.dot(x_axis, q_direction), -1.0, 1.0))
+    )
+
+    if np.linalg.norm(rotation_axis) > 1e-10:
+        rotation_axis /= np.linalg.norm(rotation_axis)
+        transform.RotateWXYZ(rotation_angle, *rotation_axis)
+    elif np.dot(x_axis, q_direction) < 0:
+        transform.RotateWXYZ(180, 0, 0, 1)
+
+    transform.Scale(length, length, length)
+
+    transform_filter = vtk.vtkTransformPolyDataFilter()
+    transform_filter.SetInputConnection(arrow_source.GetOutputPort())
+    transform_filter.SetTransform(transform)
+    transform_filter.Update()
+
+    # Write the arrow geometry.
+    writer = vtk.vtkXMLPolyDataWriter()
+    writer.SetFileName(output_path)
+    writer.SetInputConnection(transform_filter.GetOutputPort())
+    writer.Write()

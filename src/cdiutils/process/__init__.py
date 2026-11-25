@@ -1,6 +1,7 @@
 from .phaser import PhasingResultAnalyser, PyNXPhaser
 from .postprocessor import PostProcessor
 from .support_tools import SupportTools
+from .dislocations import identify_dislocations, phase_circulation
 
 __all__ = [
     "PyNXPhaser",

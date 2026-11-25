@@ -16,7 +16,7 @@ dependencies. PyVista/Trame is available for specialised workflows.
 """
 
 import os
-
+import plotly.express as px
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -52,76 +52,97 @@ def plot_3d_isosurface(
     vmin: float | None = None,
     vmax: float | None = None,
     convention: str | None = None,
-    figsize: tuple[int, int] = (9, 6),
+    figsize: tuple[int, int] = (12, 6),
     title: str | None = None,
     lighting_params: dict[str, float] | None = None,
     camera_position: dict | None = None,
     theme: str = "plotly_white",
+    show_dislocations: bool = False,
+    dislocation_graph=None,
+    q_direction: np.ndarray | None = None,
 ):
+
     """
     Plot an interactive 3D isosurface using Plotly and ipywidgets.
-
+    
     This function creates an interactive 3D visualisation where users can
     adjust the isosurface threshold, switch between different scalar
     quantities, change colormaps, and control colourbar scaling using
     interactive widgets. The camera view is preserved when updating.
-
+    
+    Optionally, the figure can display a 3D dislocation network overlaid
+    on a translucent crystal isosurface, as well as the direction of the
+    scattering vector (q-vector).
+    
     Interactive Controls:
-        - Isosurface slider: Adjust threshold level (0-1 normalised)
-        - Quantity dropdown: Switch between different quantities
-        - Colourmap dropdown: Change the colourmap on-the-fly
+        - Isosurface slider: Adjust threshold level (0-1 normalised).
+        - Quantity dropdown: Switch between different quantities.
+        - Colourmap dropdown: Change the colourmap on-the-fly.
         - Set limits checkbox: Enable manual colourbar limits
-          (default: OFF)
-          * When OFF: Auto-scales to min/max of current plot
-          * When ON: Enables vmin/vmax input fields for manual control
+          (default: OFF).
+          * When OFF: Auto-scales to min/max of current plot.
+          * When ON: Enables vmin/vmax input fields for manual control.
         - vmin/vmax inputs: Set custom colourbar limits (disabled
-          unless "Set limits" is checked)
+          unless "Set limits" is checked).
         - Symmetric colourbar: Centre at 0 for strain/phase data
-          (default: OFF)
+          (default: OFF).
         - Replace NaN with mean: Replace NaN values with mean to avoid
-          weird colouring artefacts (default: OFF)
-
+          colouring artefacts (default: OFF).
+    
     Args:
-        amplitude (np.ndarray): 3D array for determining isosurface
+        amplitude (np.ndarray): 3D array used to determine isosurface
             levels.
         quantities (dict[str, np.ndarray]): Dictionary of 3D arrays to
-            visualise, with keys as quantity names and values as numpy
+            visualise, with keys as quantity names and values as NumPy
             arrays.
-        voxel_size (tuple[float, float, float] | None, optional): Size
-            of voxels (dx, dy, dz) for proper scaling. Defaults to
+        voxel_size (tuple[float, float, float] | None, optional): Voxel
+            dimensions in NumPy array-axis order (axis 0, axis 1, axis 2),
+            used to scale the isosurface coordinates. Defaults to
             (1.0, 1.0, 1.0).
         initial_quantity (str | None, optional): Name of the quantity to
-            display initially. Must be a key in quantities dict. If None,
+            display initially. Must be a key in quantities. If None,
             uses the first key in quantities. Defaults to None.
-        cmap (str | None, optional): Initial colourmap name. Defaults to
-            "viridis".
-        vmin (float | None, optional): Initial minimum value for colour
-            scale. If None, auto-scales to data minimum. Defaults to
+        cmap (str | None, optional): Initial colormap name. Defaults to
+            None (uses the function's default colormap).
+        vmin (float | None, optional): Initial minimum value for the colour
+            scale. If None, auto-scales to the data minimum. Defaults to
             None.
-        vmax (float | None, optional): Initial maximum value for colour
-            scale. If None, auto-scales to data maximum. Defaults to
+        vmax (float | None, optional): Initial maximum value for the colour
+            scale. If None, auto-scales to the data maximum. Defaults to
             None.
         convention (str | None, optional): Coordinate convention
-            ("cxi" or "xu"). Defaults to "cxi".
+            ("cxi" or "xu"). Defaults to None.
         figsize (tuple[int, int], optional): Figure size in inches
-            (width, height). Defaults to (9, 6).
-        title (str | None, optional): Plot title. Defaults to
-            "Interactive 3D Isosurface".
+            (width, height). Defaults to (12, 6).
+        title (str | None, optional): Plot title. Defaults to None.
         lighting_params (dict[str, float] | None, optional): Plotly
             lighting parameters. Defaults to preset values.
         camera_position (dict | None, optional): Initial camera position.
-            Defaults to eye=dict(x=1.5, y=1.5, z=1.5).
+            Defaults to None, in which case the function uses its default
+            camera configuration.
         theme (str, optional): Plotly theme. Defaults to "plotly_white".
-
+        show_dislocations (bool, optional): If True, displays the
+            dislocation network overlaid on a translucent crystal
+            isosurface in a separate 3D scene. Defaults to False.
+        dislocation_graph (networkx.Graph | None, optional): Graph
+            containing the dislocation network, with node coordinates
+            stored in the "xyz_nm" attribute. Required when
+            show_dislocations is True. Defaults to None.
+        q_direction (np.ndarray | None, optional): Unit q-vector direction
+            in Cartesian (x, y, z) coordinates. If provided, displays an
+            arrow indicating the scattering-vector direction. Defaults
+            to None.
+    
     Returns:
-        VBox: ipywidgets VBox containing controls and the figure widget.
-
+        VBox: ipywidgets VBox containing the interactive controls and
+            Plotly figure widget.
+    
     Raises:
-        PlotlyImportError: if plotly or required packages are not
-            installed.
-        ValueError: if amplitude and quantities have different shapes, or
-            if initial_quantity is not in quantities dict.
-
+        PlotlyImportError: If Plotly or required packages are not installed.
+        ValueError: If amplitude and quantities have different shapes,
+            if initial_quantity is not in quantities, or if the supplied
+            dislocation graph or q-vector direction is invalid.
+    
     Example:
         >>> import numpy as np
         >>> amp = np.random.rand(50, 50, 50)
@@ -132,10 +153,16 @@ def plot_3d_isosurface(
         ...     {"het_strain": strain, "phase": phase},
         ...     voxel_size=(1.0, 1.0, 1.0),
         ...     initial_quantity="het_strain",
-        ...     cmap="cet_CET_D13"
+        ...     cmap="cet_CET_D13",
+        ...     q_direction=np.array([0.1, 0.98, -0.12]),
         ... )
         >>> display(widget)
     """
+    if show_dislocations and dislocation_graph is None:
+        raise ValueError(
+            "show_dislocations=True requires a dislocation_graph."
+        )
+    
     if not IS_PLOTLY_AVAILABLE:
         raise PlotlyImportError()
 
@@ -162,6 +189,18 @@ def plot_3d_isosurface(
                 f"shape. Got {amplitude.shape} and {quantity.shape}"
             )
 
+    if q_direction is not None:
+        q_direction = np.asarray(q_direction, dtype=float)
+
+        if q_direction.shape != (3,) or not np.all(np.isfinite(q_direction)):
+            raise ValueError("q_direction must be a finite 3-element vector.")
+    
+        q_norm = np.linalg.norm(q_direction)
+        if q_norm == 0:
+            raise ValueError("q_direction must be non-zero.")
+    
+        q_direction = q_direction / q_norm
+    
     # set defaults
     if voxel_size is None:
         voxel_size = (1.0, 1.0, 1.0)
@@ -209,6 +248,22 @@ def plot_3d_isosurface(
         isosurface_default * amplitude_max,
         voxel_size,
     )
+    
+    # Centre the reconstructed crystal at the origin.
+    crystal_centre = 0.5 * (
+        verts_scaled.min(axis=0) + verts_scaled.max(axis=0)
+    )
+    verts_scaled -= crystal_centre
+
+    # Use the same physical coordinate limits for all 3D scenes.
+    axis_ranges = [
+        [
+            float(np.min(verts_scaled[:, i])),
+            float(np.max(verts_scaled[:, i])),
+        ]
+        for i in range(3)
+    ]
+    x_range, y_range, z_range = axis_ranges
 
     # set initial colourbar limits, handle NaN values
     if vmin is None:
@@ -224,48 +279,378 @@ def plot_3d_isosurface(
     # convert colourmap to plotly format
     initial_plotly_cmap = colorcet_to_plotly(initial_cmap)
 
-    # Create FigureWidget (allows in-place updates)
-    fig = go.FigureWidget(
-        data=[
-            go.Mesh3d(
-                x=verts_scaled[:, 0],
-                y=verts_scaled[:, 1],
-                z=verts_scaled[:, 2],
-                i=faces[:, 0],
-                j=faces[:, 1],
-                k=faces[:, 2],
-                intensity=quantity_at_verts,
-                colorscale=initial_plotly_cmap,
-                cmin=initial_vmin,
-                cmax=initial_vmax,
-                colorbar=dict(title=initial_qty_name),
-                opacity=1.0,
-                flatshading=False,
-                lighting=lighting_params,
-                hovertemplate=(
-                    "<b>Position:</b><br>"
-                    "x: %{x:.1f}<br>y: %{y:.1f}<br>z: %{z:.1f}<br>"
-                    f"<b>{initial_qty_name}:</b> %{{intensity:.3f}}<br>"
-                    "<extra></extra>"
-                ),
-            )
-        ]
+    # Create the strain isosurface mesh.
+    strain_mesh = go.Mesh3d(
+        x=verts_scaled[:, 0],
+        y=verts_scaled[:, 1],
+        z=verts_scaled[:, 2],
+        i=faces[:, 0],
+        j=faces[:, 1],
+        k=faces[:, 2],
+        intensity=quantity_at_verts,
+        colorscale=initial_plotly_cmap,
+        cmin=initial_vmin,
+        cmax=initial_vmax,
+        colorbar=dict(
+            title=dict(text=initial_qty_name),
+            x=(
+                0.30 if show_dislocations and q_direction is not None
+                else 0.45 if show_dislocations
+                else 0.45 if q_direction is not None
+                else 0.70
+            ),
+            y=0.5,
+            len=0.90,
+            thickness=12,
+            xanchor="left",
+        ),
+        opacity=1.0,
+        flatshading=False,
+        lighting=lighting_params,
+        scene="scene",
+        hovertemplate=(
+            "<b>Position:</b><br>"
+            "x: %{x:.1f}<br>y: %{y:.1f}<br>z: %{z:.1f}<br>"
+            f"<b>{initial_qty_name}:</b> %{{intensity:.3f}}<br>"
+            "<extra></extra>"
+        ),
     )
+    
+    fig_data = [strain_mesh]
+    
+    if show_dislocations:
+        # Duplicate the crystal isosurface in translucent grey.
+        crystal_mesh = go.Mesh3d(
+            x=verts_scaled[:, 0],
+            y=verts_scaled[:, 1],
+            z=verts_scaled[:, 2],
+            i=faces[:, 0],
+            j=faces[:, 1],
+            k=faces[:, 2],
+            color="lightgrey",
+            opacity=0.18,
+            flatshading=False,
+            lighting=lighting_params,
+            showscale=False,
+            scene="scene2",
+            hoverinfo="skip",
+            name="Crystal",
+            showlegend=False,
+        )
+    
+        fig_data.append(crystal_mesh)
+    
+        # Plot each connected dislocation component.
+        colors = px.colors.qualitative.Alphabet
 
-    fig.update_layout(
-        title=f"{title} - {initial_qty_name} (iso={isosurface_default:.2f})",
+        import networkx as nx
+        
+        for i, nodes in enumerate(
+            nx.connected_components(dislocation_graph)
+        ):
+            subgraph = dislocation_graph.subgraph(nodes)
+        
+            xs, ys, zs = [], [], []
+        
+            for u, v in subgraph.edges():
+                p1 = (
+                    np.asarray(dislocation_graph.nodes[u]["xyz_nm"])
+                    - crystal_centre
+                )
+                p2 = (
+                    np.asarray(dislocation_graph.nodes[v]["xyz_nm"])
+                    - crystal_centre
+                )
+        
+                xs.extend([p1[0], p2[0], None])
+                ys.extend([p1[1], p2[1], None])
+                zs.extend([p1[2], p2[2], None])
+        
+            color = colors[i % len(colors)]
+        
+            fig_data.append(
+                go.Scatter3d(
+                    x=xs,
+                    y=ys,
+                    z=zs,
+                    mode="lines",
+                    line=dict(color=color, width=6),
+                    name=f"Dislocation {i + 1}",
+                    scene="scene2",
+                )
+            )
+
+        
+    # Display the q-vector as a black arrow in a separate 3D scene.
+    if q_direction is not None:
+        q_length = 0.4 * min(
+            x_range[1] - x_range[0],
+            y_range[1] - y_range[0],
+            z_range[1] - z_range[0],
+        )
+                
+        qx, qy, qz = q_direction * q_length
+        q_endpoint = np.array([qx, qy, qz])
+    
+        # Main q-vector shaft.
+        fig_data.append(
+            go.Scatter3d(
+                x=[0, qx],
+                y=[0, qy],
+                z=[0, qz],
+                mode="lines",
+                line=dict(color="black", width=6),
+                name=f"Q direction ({convention.upper()})",
+                hovertemplate=f"Q direction ({convention.upper()})<extra></extra>",
+                scene="scene3",
+            )
+        )
+    
+        # Arrowhead.
+        arrow_length = 0.12 * q_length
+        reference = np.array([0.0, 0.0, 1.0])
+    
+        # Choose a reference vector not parallel to q_direction.
+        if abs(np.dot(q_direction, reference)) > 0.9:
+            reference = np.array([0.0, 1.0, 0.0])
+    
+        perpendicular = np.cross(q_direction, reference)
+        perpendicular /= np.linalg.norm(perpendicular)
+    
+        arrow_base = q_endpoint - arrow_length * q_direction
+    
+        head_1 = arrow_base + 0.5 * arrow_length * perpendicular
+        head_2 = arrow_base - 0.5 * arrow_length * perpendicular
+    
+        fig_data.append(
+            go.Scatter3d(
+                x=[qx, head_1[0], None, qx, head_2[0]],
+                y=[qy, head_1[1], None, qy, head_2[1]],
+                z=[qz, head_1[2], None, qz, head_2[2]],
+                mode="lines",
+                line=dict(color="black", width=6),
+                showlegend=False,
+                hoverinfo="skip",
+                scene="scene3",
+            )
+        )
+    
+    fig = go.FigureWidget(data=fig_data)
+
+    layout_kwargs = dict(
+        title=dict(
+            text=f"{title} - {initial_qty_name} "
+                 f"(iso={isosurface_default:.2f})",
+            x=0.5,
+            xanchor="center",
+        ),
         template=theme,
-        scene=dict(
+        width=figsize[0] * 96,
+        height=figsize[1] * 96,
+        dragmode="orbit",
+    )
+    
+    has_dislocations = show_dislocations
+    has_q_direction = q_direction is not None
+
+    # Three scenes: strain, dislocations, and q direction.
+    if has_dislocations and has_q_direction:
+
+        layout_kwargs["scene"] = dict(
+            domain=dict(x=[0.00, 0.30], y=[0.0, 1.0]),
+            xaxis=dict(showbackground=True, title="x", range=x_range),
+            yaxis=dict(showbackground=True, title="y", range=y_range),
+            zaxis=dict(showbackground=True, title="z", range=z_range),
+            aspectmode="data",
+            camera=camera_position,
+        )
+
+        layout_kwargs["scene2"] = dict(
+            domain=dict(x=[0.35, 0.65], y=[0.0, 1.0]),
+            xaxis=dict(showbackground=True, title="x", range=x_range),
+            yaxis=dict(showbackground=True, title="y", range=y_range),
+            zaxis=dict(showbackground=True, title="z", range=z_range),
+            aspectmode="data",
+            camera=camera_position,
+        )
+
+        layout_kwargs["scene3"] = dict(
+            domain=dict(x=[0.70, 1], y=[0.0, 1.0]),
+            xaxis=dict(showbackground=True, title="x", range=x_range),
+            yaxis=dict(showbackground=True, title="y", range=y_range),
+            zaxis=dict(showbackground=True, title="z", range=z_range),
+            aspectmode="cube",
+            camera=camera_position,
+        )
+
+        layout_kwargs["margin"] = dict(
+            l=20,
+            r=20,
+            t=70,
+            b=30,
+        )
+
+        layout_kwargs["legend"] = dict(
+            x=0.64,
+            y=1.0,
+            xanchor="left",
+            yanchor="top",
+            font=dict(size=10),
+        )
+
+        # # Keep the strain colourbar between the first and second scenes.
+        # fig.data[0].colorbar.x = 0.26
+
+    # Two scenes: strain and dislocations.
+    elif has_dislocations:
+
+        layout_kwargs["scene"] = dict(
+            domain=dict(x=[0.0, 0.45], y=[0.0, 1.0]),
+            xaxis=dict(
+                showbackground=True,
+                title="x (nm)",
+                range=x_range,
+            ),
+            yaxis=dict(
+                showbackground=True,
+                title="y (nm)",
+                range=y_range,
+            ),
+            zaxis=dict(
+                showbackground=True,
+                title="z (nm)",
+                range=z_range,
+            ),
+            aspectmode="data",
+            camera=camera_position,
+        )
+
+        layout_kwargs["scene2"] = dict(
+            domain=dict(x=[0.55, 1], y=[0.0, 1.0]),
+            xaxis=dict(showbackground=True, title="x (nm)", range=x_range),
+            yaxis=dict(showbackground=True, title="y (nm)", range=y_range),
+            zaxis=dict(showbackground=True, title="z (nm)", range=z_range),
+            aspectmode="data",
+            camera=camera_position,
+        )
+
+        layout_kwargs["margin"] = dict(
+            l=20,
+            r=20,
+            t=70,
+            b=30,
+        )
+
+        layout_kwargs["legend"] = dict(
+            x=0.96,
+            y=1.0,
+            xanchor="left",
+            yanchor="top",
+            font=dict(size=10),
+        )
+
+    # Two scenes: strain and q direction.
+    elif has_q_direction:
+        layout_kwargs["scene"] = dict(
+            domain=dict(x=[0.0, 0.45], y=[0.0, 1.0]),
+            xaxis=dict(
+                showbackground=True,
+                title="x (nm)",
+                range=x_range,
+            ),
+            yaxis=dict(
+                showbackground=True,
+                title="y (nm)",
+                range=y_range,
+            ),
+            zaxis=dict(
+                showbackground=True,
+                title="z (nm)",
+                range=z_range,
+            ),
+            aspectmode="data",
+            camera=camera_position,
+        )
+
+        layout_kwargs["scene3"] = dict(
+            domain=dict(x=[0.55, 1], y=[0.0, 1.0]),
+            xaxis=dict(showbackground=True, title="x (nm)", range=x_range),
+            yaxis=dict(showbackground=True, title="y (nm)", range=y_range),
+            zaxis=dict(showbackground=True, title="z (nm)", range=z_range),
+            aspectmode="cube",
+            camera=camera_position,
+        )
+
+        layout_kwargs["margin"] = dict(
+            l=20,
+            r=20,
+            t=70,
+            b=30,
+        )
+
+        layout_kwargs["legend"] = dict(
+            x=0.96,
+            y=1.0,
+            xanchor="left",
+            yanchor="top",
+            font=dict(size=10),
+        )
+    # One scene: strain only.
+    else:
+
+        layout_kwargs["scene"] = dict(
+            domain=dict(x=[0.0, 1], y=[0.0, 1.0]),
             xaxis=dict(showbackground=True, title="x"),
             yaxis=dict(showbackground=True, title="y"),
             zaxis=dict(showbackground=True, title="z"),
             aspectmode="data",
             camera=camera_position,
-        ),
-        width=figsize[0] * 96,
-        height=figsize[1] * 96,
-        dragmode="orbit",
-    )
+        )
+                
+        layout_kwargs["margin"] = dict(
+            l=20,
+            r=20,
+            t=70,
+            b=30,
+        )
+        
+    
+    fig.update_layout(**layout_kwargs)
+
+    # Synchronise cameras across all active 3D scenes.
+    active_scenes = ["scene"]
+    
+    if show_dislocations:
+        active_scenes.append("scene2")
+    
+    if q_direction is not None:
+        active_scenes.append("scene3")
+    
+    if len(active_scenes) > 1:
+        camera_sync = {"busy": False}
+    
+        def sync_camera(source_scene, target_scenes):
+            def callback(layout, camera):
+                if camera_sync["busy"]:
+                    return
+    
+                camera_sync["busy"] = True
+                try:
+                    for target_scene in target_scenes:
+                        getattr(fig.layout, target_scene).camera = camera
+                finally:
+                    camera_sync["busy"] = False
+    
+            getattr(fig.layout, source_scene).on_change(
+                callback, "camera"
+            )
+    
+        for source_scene in active_scenes:
+            target_scenes = [
+                scene for scene in active_scenes
+                if scene != source_scene
+            ]
+            sync_camera(source_scene, target_scenes)
 
     # Create widgets
     isosurface_slider = FloatSlider(
@@ -403,6 +788,7 @@ def plot_3d_isosurface(
                 voxel_size,
             )
         )
+        verts_scaled -= crystal_centre
 
         # optionally replace NaN values with mean to fix weird colouring
         if replace_nan_checkbox.value:
@@ -448,6 +834,7 @@ def plot_3d_isosurface(
 
         # update mesh data in-place (preserves camera view!)
         with fig.batch_update():
+            # Update strain isosurface (scene 1)
             fig.data[0].x = verts_scaled[:, 0]
             fig.data[0].y = verts_scaled[:, 1]
             fig.data[0].z = verts_scaled[:, 2]
@@ -465,8 +852,20 @@ def plot_3d_isosurface(
                 f"<b>{qty_name}:</b> %{{intensity:.3f}}<br>"
                 "<extra></extra>"
             )
-            fig.layout.title = f"{title} - {qty_name} (iso={iso_level:.2f})"
-
+        
+            # Update translucent crystal isosurface (scene 2)
+            if show_dislocations:
+                fig.data[1].x = verts_scaled[:, 0]
+                fig.data[1].y = verts_scaled[:, 1]
+                fig.data[1].z = verts_scaled[:, 2]
+                fig.data[1].i = faces[:, 0]
+                fig.data[1].j = faces[:, 1]
+                fig.data[1].k = faces[:, 2]
+        
+            fig.layout.title = (
+                f"{title} - {qty_name} (iso={iso_level:.2f})"
+            )
+            
     # Attach observers to widgets
     isosurface_slider.observe(update_mesh, names="value")
     quantity_dropdown.observe(update_mesh, names="value")
@@ -580,7 +979,11 @@ def _extract_isosurface_with_values(
     )
 
     # scale vertices
-    verts_scaled = verts * voxel_size
+    voxel_size = np.asarray(voxel_size)
+    
+    # Convert NumPy array coordinates (axis 0, 1, 2)
+    # into Cartesian coordinates (x, y, z).
+    verts_scaled = verts[:, ::-1] * voxel_size[::-1]
 
     # interpolate quantity values at vertices
     if use_interpolator or np.iscomplexobj(quantity):

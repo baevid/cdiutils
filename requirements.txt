@@ -16,6 +16,7 @@ ipyvolume
 ipython_genutils
 bokeh
 panel
+networkx>=2.8
 tornado
 # Documentation dependencies
 sphinx>=4.0

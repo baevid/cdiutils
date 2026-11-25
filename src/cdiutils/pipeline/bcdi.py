@@ -8,6 +8,7 @@ Authors:
 # Built-in dependencies.
 import copy
 import glob
+import json
 import os
 import subprocess
 import logging
@@ -28,12 +29,15 @@ from cdiutils.converter import SpaceConverter
 from cdiutils.facetanalysis import FacetAnalysisProcessor
 from cdiutils.geometry import Geometry
 from cdiutils.io import CXIFile, Loader, load_cxi
-from cdiutils.io.vtk import IS_VTK_AVAILABLE, save_as_vti
+from cdiutils.io.vtk import IS_VTK_AVAILABLE, save_as_vti, save_as_vtp
 from cdiutils.plot.colormap import RED_TO_TEAL
 from cdiutils.plot.slice import plot_volume_slices
 from cdiutils.plot.volume import plot_3d_surface_projections
 from cdiutils.process.phaser import PhasingResultAnalyser, PyNXImportError
 from cdiutils.process.postprocessor import PostProcessor
+from cdiutils.process.dislocations import (
+    identify_dislocations as run_dislocation_analysis,
+)
 from cdiutils.process import alien_removal
 
 # Utility functions
@@ -176,6 +180,8 @@ class BcdiPipeline(Pipeline):
         self.result_analyser: PhasingResultAnalyser = None
         self.reconstruction: np.ndarray = None
         self.structural_props: dict = None
+        self.dislocation_graph = None
+        self.dislocation_summary: dict = None
 
         # the list of phase retrieval results
         self.phasing_results = []
@@ -1982,6 +1988,26 @@ reconstruction (best solution).""",
             path = cxi.create_cxi_image(data=modes, process_4="process_4")
             cxi.get_node(path).attrs["description"] = "Mode decomposition"
 
+            
+    def get_q_direction(self):
+        """Return the unit q-vector in Cartesian (x, y, z) coordinates."""
+        if self.q_lab_pos["ref"] is None:
+            raise ValueError("The reference q-vector is not available.")
+
+        q_vector = np.asarray(self.q_lab_pos["ref"], dtype=float)
+
+        if self.params["convention"].lower() == "cxi":
+            q_vector = Geometry.swap_convention(q_vector)
+
+        q_vector = q_vector[::-1]
+
+        q_norm = np.linalg.norm(q_vector)
+        if q_norm == 0:
+            raise ValueError("The reference q-vector has zero magnitude.")
+
+        return q_vector / q_norm
+        
+    
     @Pipeline.process
     def postprocess(self, **params) -> None:
         """
@@ -2001,6 +2027,9 @@ reconstruction (best solution).""",
                 - 'flip': flip reconstruction (complex conjugate)
                 - 'convention': 'xu' or 'cxi'
                 - 'handle_defects': enable defect-aware processing
+                - 'identify_dislocations': detect dislocation lines and build a graph
+                - 'dislocation_circulation_threshold': minimum phase circulation (rad)
+                - 'dislocation_min_length_nm': minimum graph component length (nm)
                 - 'amplitude_morph_close': apply morphological closing
                   to the reconstruction amplitude and support
                 - 'amplitude_morph_close_size': size of the structuring
@@ -2211,6 +2240,38 @@ reconstruction (best solution).""",
             f"The final output array size is {self.structural_props['amplitude'].shape} with an interpolated voxel size (nm) of {self.structural_props['voxel_size']}"
         )
         self.params["voxel_size"] = self.structural_props["voxel_size"]
+
+        # Optional topological dislocation analysis. This is independent
+        # of handle_defects: the latter changes strain processing, while
+        # this option identifies and graphs dislocation-line candidates.
+        self.dislocation_graph = None
+        self.dislocation_summary = None
+        if self.params["identify_dislocations"]:
+            self.logger.info(
+                "Identifying dislocations from phase circulation and "
+                "constructing a 3D skeleton graph."
+            )
+            dislocation_results = run_dislocation_analysis(
+                phase=self.structural_props["phase"],
+                support=self.structural_props["support"],
+                voxel_size=self.params["voxel_size"],
+                circulation_threshold=self.params[
+                    "dislocation_circulation_threshold"
+                ],
+                min_length_nm=self.params["dislocation_min_length_nm"],
+            )
+            self.dislocation_graph = dislocation_results.pop(
+                "dislocation_graph"
+            )
+            self.dislocation_summary = dislocation_results.pop(
+                "dislocation_summary"
+            )
+            self.structural_props.update(dislocation_results)
+            self.extra_info["dislocation_summary"] = self.dislocation_summary
+            self.logger.info(
+                "Dislocation analysis complete: "
+                f"{self.dislocation_summary}"
+            )
 
         to_plot = {
             k: self.structural_props[k]
@@ -2552,8 +2613,36 @@ reconstruction (best solution).""",
             **self.structural_props,
         )
 
+        # Save the dislocation graph separately: it is a graph object rather
+        # than a numerical volume and should not be embedded in the NPZ/CXI.
+        if self.dislocation_graph is not None:
+            graph_data = {
+                "graph": dict(self.dislocation_graph.graph),
+                "nodes": [
+                    {"id": int(node), **dict(attributes)}
+                    for node, attributes
+                    in self.dislocation_graph.nodes(data=True)
+                ],
+                "edges": [
+                    {
+                        "source": int(source),
+                        "target": int(target),
+                        **dict(attributes),
+                    }
+                    for source, target, attributes
+                    in self.dislocation_graph.edges(data=True)
+                ],
+                "summary": self.dislocation_summary,
+            }
+            graph_path = (
+                f"{self.dump_dir}/S{self.scan}_dislocation_graph.json"
+            )
+            with open(graph_path, "w", encoding="utf-8") as graph_file:
+                json.dump(graph_data, graph_file, indent=2)
+            self.logger.info(f"Dislocation graph saved to {graph_path}.")
+
         # Save as vti
-        if IS_VTK_AVAILABLE:
+        if IS_VTK_AVAILABLE:               
             to_save_as_vti = {
                 k: self.structural_props[k]
                 for k in [
@@ -2565,7 +2654,9 @@ reconstruction (best solution).""",
                     "het_strain_from_dspacing",
                     "lattice_parameter",
                     "dspacing",
+                    "dislocation_mask",
                 ]
+                if k in self.structural_props
             }
             to_save_as_vti["amplitude"] = normalise(
                 to_save_as_vti["amplitude"]
@@ -2598,6 +2689,13 @@ reconstruction (best solution).""",
                 cxi_convention=(self.params["convention"].lower() == "cxi"),
                 **to_save_as_vti,
             )
+
+            # save q vector as vtp
+            save_as_vtp(
+                f"{self.dump_dir}/S{self.scan}_q_vector.vtp",
+                q_direction=self.get_q_direction(),
+                length=100.0,
+            )
         else:
             self.logger.info(
                 "vtk package not available, will not save the vti file."
@@ -2613,21 +2711,26 @@ reconstruction (best solution).""",
         )
         facet_anlysis_processor.facet_analysis()
 
-    def show_3d_final_result(self):
+
+    def show_3d_final_result(
+        self,
+        show_dislocations=False,
+        show_q_vector=True,
+    ):
         """
-        Show plotly interactive figure of the final post-processed
-        reconstruction.
+        Show an interactive 3D figure of the final post-processed
+        reconstruction, optionally including the dislocation network.
         """
         from cdiutils.interactive import plot_3d_isosurface
-
+    
         path = f"{self.dump_dir}S{self.scan}_postprocessed_data.cxi"
-        # first check whether the file exists
+    
         if not os.path.exists(path):
             raise FileNotFoundError(
                 f"The result file ({path}) does not exist yet, have you "
                 "run the post-processing method?"
             )
-
+    
         loaded_data = load_cxi(
             path,
             "amplitude",
@@ -2639,23 +2742,62 @@ reconstruction (best solution).""",
             "dspacing",
             "lattice_parameter",
         )
-
+    
         loaded_voxel_size = load_cxi(path, "voxel_size")
+    
+        # Load the dislocation graph only when requested.
+        dislocation_graph = None
+    
+        if show_dislocations:
+            import json
+            import warnings
+            import networkx as nx
 
-        # the default quantity to visualise is the heterogeneous strain
-        # with cmap cet_CET_D13
-        # calculate symmetric limits based on absolute max
-        data_abs_max = np.abs(loaded_data["het_strain_from_dspacing"]).max()
+            graph_path = os.path.join(
+                self.dump_dir,
+                f"S{self.scan}_dislocation_graph.json",
+            )
+
+            if not os.path.exists(graph_path):
+                warnings.warn(
+                    f"Dislocation graph not found: {graph_path}. "
+                    "Dislocations will not be displayed. "
+                    "Run postprocessing with identify_dislocations=True "
+                    "to generate the graph.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                show_dislocations = False
+            else:
+                with open(graph_path, "r") as f:
+                    graph_data = json.load(f)
+
+                dislocation_graph = nx.node_link_graph(graph_data)
+    
+        # Default quantity: heterogeneous strain from d-spacing.
+        data_abs_max = np.abs(
+            loaded_data["het_strain_from_dspacing"]
+        ).max()
+    
         vmin = -data_abs_max
         vmax = data_abs_max
 
+        q_direction = (
+            self.get_q_direction()
+            if show_q_vector
+            else None
+        )
+        
         return plot_3d_isosurface(
             loaded_data["amplitude"],
             loaded_data,
             voxel_size=loaded_voxel_size,
             initial_quantity="het_strain_from_dspacing",
-            # cmap="cet_CET_D13",
             cmap="fast",
             vmin=vmin,
             vmax=vmax,
+            show_dislocations=show_dislocations,
+            dislocation_graph=dislocation_graph,
+            q_direction=q_direction,
         )
+    

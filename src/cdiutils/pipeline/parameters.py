@@ -54,7 +54,10 @@ DEFAULT_PIPELINE_PARAMS = {
     "verbose": True,  # enable verbose output
     "debug": True,  # enable debug mode
     "output_shape": None, # set the output shape to be default if not specified
-    "handle_defects": False,  # handle detector defects
+    "handle_defects": False,  # defect-aware phase/strain processing
+    "identify_dislocations": False,  # detect and graph dislocation lines
+    "dislocation_circulation_threshold": 0.75 * np.pi,  # radians
+    "dislocation_min_length_nm": 0.0,  # minimum graph component length
     "orthogonalise_before_phasing": False,  # orthogonalise early
     "convention": "cxi",  # coordinate convention ('cxi' or 'nexus')
     # === PyNX phase retrieval parameters ===
