@@ -549,13 +549,18 @@ class PipelinePlotter:
         shape = exp_ortho_data.shape
         q_voxel_size = 2 * np.pi / (10 * np.multiply(voxel_size, shape))
         obj_q_grid = [
-            np.arange(-shape[i] // 2, shape[i] // 2) * q_voxel_size[i]
+            2 * np.pi * np.fft.fftshift(
+                np.fft.fftfreq(shape[i], d=voxel_size[i] * 10)
+            )
             for i in range(3)
         ]
 
         obj = symmetric_pad(obj, output_shape=shape)
-        obj_fft = np.abs(np.fft.ifftshift(np.fft.fftn(np.fft.fftshift(obj))))
-        obj_fft **= 2  # We want to plot the intensity
+        obj_fft = np.abs(
+            np.fft.fftshift(
+                np.fft.fftn(np.fft.ifftshift(obj))
+            )
+        ) ** 2 # We want to plot the intensity
 
         q_spacing = [q[1] - q[0] for q in obj_q_grid]
         q_centre = tuple(obj_q_grid[i].mean() for i in range(3))

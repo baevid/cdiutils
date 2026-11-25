@@ -29,7 +29,7 @@ from cdiutils.converter import SpaceConverter
 from cdiutils.facetanalysis import FacetAnalysisProcessor
 from cdiutils.geometry import Geometry
 from cdiutils.io import CXIFile, Loader, load_cxi
-from cdiutils.io.vtk import IS_VTK_AVAILABLE, save_as_vti, save_as_vtp
+from cdiutils.io.vtk import IS_VTK_AVAILABLE, save_as_vti, save_as_vtp, save_dislocation_graph_as_vtp
 from cdiutils.plot.colormap import RED_TO_TEAL
 from cdiutils.plot.slice import plot_volume_slices
 from cdiutils.plot.volume import plot_3d_surface_projections
@@ -2237,7 +2237,10 @@ reconstruction (best solution).""",
             support_morph_close_size=self.params["amplitude_morph_close_size"],
         )
         self.logger.info(
-            f"The final output array size is {self.structural_props['amplitude'].shape} with an interpolated voxel size (nm) of {self.structural_props['voxel_size']}"
+            f"The final output array size is "
+            f"{self.structural_props['amplitude'].shape} "
+            f"with a voxel size (nm) of "
+            f"{self.structural_props['voxel_size']}"
         )
         self.params["voxel_size"] = self.structural_props["voxel_size"]
 
@@ -2634,12 +2637,29 @@ reconstruction (best solution).""",
                 ],
                 "summary": self.dislocation_summary,
             }
+        
             graph_path = (
                 f"{self.dump_dir}/S{self.scan}_dislocation_graph.json"
             )
             with open(graph_path, "w", encoding="utf-8") as graph_file:
                 json.dump(graph_data, graph_file, indent=2)
+        
             self.logger.info(f"Dislocation graph saved to {graph_path}.")
+        
+            # Also export the dislocation graph as VTK PolyData.
+            if IS_VTK_AVAILABLE:       
+                vtp_path = (
+                    f"{self.dump_dir}/S{self.scan}_dislocation_graph.vtp"
+                )
+                save_dislocation_graph_as_vtp(
+                    self.dislocation_graph,
+                    vtp_path,
+                    radius_nm=2.0,
+                    resolution=1,
+                )
+                self.logger.info(
+                    f"Dislocation graph saved to {vtp_path}."
+                )
 
         # Save as vti
         if IS_VTK_AVAILABLE:               
