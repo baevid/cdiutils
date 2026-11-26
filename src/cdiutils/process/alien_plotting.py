@@ -1,6 +1,7 @@
 import numpy as np
 import pylab as plt
 
+from matplotlib.colors import to_rgba
 from matplotlib import cm
 from matplotlib.colors import Normalize, to_hex
 from cdiutils.plot.slice import plot_volume_slices
@@ -13,10 +14,11 @@ import plotly.express as px
 def plot_3D_projections(
     data,
     mask=None,
-    alpha_mask=0.3,
+    alpha_mask=0.15,
     ax=None,
     fig=None,
     cmap=None,
+    alien_color="cyan",
     log_scale=False,
     fig_title=None,
 ):
@@ -62,7 +64,7 @@ def plot_3D_projections(
     ):
         axis.imshow(
             projection,
-            cmap=cmap or "turbo",
+            cmap=cmap or "inferno",
             aspect="equal",
             interpolation="nearest",
             origin="upper",
@@ -70,13 +72,14 @@ def plot_3D_projections(
 
         if mask_projection is not None:
             mask_plot = (mask_projection != 0).astype(float)
+        
+            color = np.array(to_rgba(alien_color))
+            overlay = np.zeros((*mask_plot.shape, 4))
+            overlay[..., :3] = color[:3]
+            overlay[..., 3] = alpha_mask * mask_plot
+        
             axis.imshow(
-                np.dstack([
-                    mask_plot,
-                    np.zeros(mask_plot.shape),
-                    np.zeros(mask_plot.shape),
-                    alpha_mask * mask_plot,
-                ]),
+                overlay,
                 aspect="equal",
                 interpolation="nearest",
                 origin="upper",

@@ -115,7 +115,7 @@ def create_intensity_threshold_mask(data_log, threshold,
     '''
 
 def create_intensity_threshold_mask(
-    data_log, threshold, plot=False, data=None, fig_title=None
+    data_log, threshold, plot=False, data=None, fig_title=None, cmap="inferno",
 ):
     """
     Create a mask using a threshold in intensity.
@@ -129,12 +129,14 @@ def create_intensity_threshold_mask(
                 log_scale=True,
                 mask=mask,
                 fig_title=fig_title,
+                cmap=cmap,
             )
         else:
             fig = plot_3D_projections(
                 data_log,
                 mask=mask,
                 fig_title=fig_title,
+                cmap=cmap,
             )
 
         display(fig)
@@ -658,7 +660,7 @@ def plot_clusters_select_2d_projections(
 ###########################################################################################################################################
 
 def create_mask_from_selected_clusters(data, check_list, pixels, pixels_labels, labels,
-                                       plot=False):
+                                       plot=False, cmap="inferno"):
     '''
     Create alien mask from clusters selected by the user
 
@@ -688,6 +690,7 @@ def create_mask_from_selected_clusters(data, check_list, pixels, pixels_labels, 
             log_scale=True,
             mask=mask_alien,
             fig_title="Selected Alien Mask",
+            cmap=cmap,
         )
         display(fig)
         plt.close(fig)
@@ -788,7 +791,7 @@ def display_mask_viewer(mask):
 
             image = ax.imshow(
                 slice_2d,
-                cmap="hot",
+                cmap="inferno",
                 interpolation="nearest",
                 vmin=vmin,
                 vmax=vmax,

@@ -32,6 +32,7 @@ class PipelinePlotter:
         integrate: bool = False,
         title: str = "",
         save: str = None,
+        cmap: str = "inferno",
     ) -> tuple[plt.Figure, plt.Axes]:
         """
         Plot detector data slices with voxel position markers.
@@ -101,7 +102,7 @@ class PipelinePlotter:
                     im = old_ax.get_images()[0]
                     new_ax.imshow(
                         im.get_array(),
-                        cmap=im.get_cmap(),
+                        cmap=cmap,
                         norm=norm,
                     )
 
@@ -140,7 +141,7 @@ class PipelinePlotter:
             fig, axes = plt.subplots(1, 3, layout="tight", figsize=(6, 2))
             for new_ax, ax in zip(axes.flat, axes1.flat):
                 im = ax.get_images()[0]
-                new_ax.imshow(im.get_array(), cmap=im.get_cmap(), norm=norm)
+                new_ax.imshow(im.get_array(), cmap=cmap, norm=norm)
 
             for ax, p in zip(axes.flat, ((2, 1), (2, 0), (0, 1))):
                 cls._plot_markers(
@@ -216,6 +217,7 @@ class PipelinePlotter:
         q_grid: np.ndarray,
         title: str = "",
         save: str = None,
+        cmap: str = "inferno",
     ) -> tuple[plt.Figure, plt.Axes]:
         """
         Compare raw and orthogonalised detector data side by side.
@@ -257,7 +259,7 @@ class PipelinePlotter:
                 im = old_ax.get_images()[0]
                 new_ax.imshow(
                     im.get_array(),
-                    cmap=im.get_cmap(),
+                    cmap=cmap,
                     norm=im.norm,
                     extent=im.get_extent(),
                     origin=im.origin,
@@ -592,7 +594,7 @@ class PipelinePlotter:
                 im = old_ax.get_images()[0]
                 new_ax.imshow(
                     im.get_array(),
-                    cmap = "inferno",
+                    cmap="inferno",
                     norm=im.norm,
                     extent=im.get_extent(),
                     origin=im.origin,
