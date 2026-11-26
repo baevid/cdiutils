@@ -29,7 +29,7 @@ from cdiutils.converter import SpaceConverter
 from cdiutils.facetanalysis import FacetAnalysisProcessor
 from cdiutils.geometry import Geometry
 from cdiutils.io import CXIFile, Loader, load_cxi
-from cdiutils.io.vtk import IS_VTK_AVAILABLE, save_as_vti, save_as_vtp
+from cdiutils.io.vtk import IS_VTK_AVAILABLE, save_as_vti, save_as_vtp, save_dislocation_graph_as_vtp
 from cdiutils.plot.colormap import RED_TO_TEAL
 from cdiutils.plot.slice import plot_volume_slices
 from cdiutils.plot.volume import plot_3d_surface_projections
@@ -540,6 +540,7 @@ class BcdiPipeline(Pipeline):
             self.cropped_detector_data,
             full_det_data=self.detector_data,
             voxels=self.voi,
+            cmap="inferno",
             title=(
                 "Detector data preprocessing (slices), "
                 f"{self.sample_name}, S{self.scan}"
@@ -550,6 +551,7 @@ class BcdiPipeline(Pipeline):
             self.cropped_detector_data,
             full_det_data=self.detector_data,
             voxels=self.voi,
+            cmap="inferno",
             integrate=True,
             title=(
                 "Detector data preprocessing (projection), "
@@ -563,6 +565,7 @@ class BcdiPipeline(Pipeline):
             self.cropped_detector_data,
             self.orthogonalised_intensity,
             q_lab_regular_grid,
+            cmap="inferno",
             title=(
                 r"From detector frame to q lab frame"
                 f", {self.sample_name}, S{self.scan}"
@@ -590,6 +593,7 @@ class BcdiPipeline(Pipeline):
         smooth_mask: bool = True,
         smoothing_size: int = 2,
         inspect_mask: bool = False,
+        cmap: str = "inferno",
     ) -> None:
 
         """
@@ -641,6 +645,7 @@ class BcdiPipeline(Pipeline):
                 the final combined detector mask after confirmation.
                 The viewer allows inspection along all three detector
                 axes. Defaults to False.
+            cmap (str): Select a colour map
 
         Notes:
             - Existing masked pixels are preserved when the alien mask
@@ -710,6 +715,7 @@ class BcdiPipeline(Pipeline):
             plot=plot_intensity_thr,
             data=processed_data,
             fig_title="Intensity Thresholding for Alien Diffraction Detection",
+            cmap="inferno",
         )
 
         if smooth_mask:
@@ -755,6 +761,7 @@ class BcdiPipeline(Pipeline):
                 pixels_labels,
                 labels,
                 plot=plot_alien_mask,
+                cmap=cmap,
             )
             alien_mask = np.asarray(alien_mask) > 0
 
@@ -1073,32 +1080,40 @@ class BcdiPipeline(Pipeline):
         self.detector_data = None
 
         return roi
-
+        
     def _filter(self, data: np.ndarray) -> np.ndarray:
         """
         Apply hot pixel filtering and background subtraction.
-
-        Modifies mask in-place when hot pixels detected.
+    
+        Invalid uint32 sentinel values are added to the detector mask
+        and replaced with zero.
+    
+        Modifies mask in-place when invalid or hot pixels are detected.
         """
+    
+        # Identify and mask invalid detector pixels
+        invalid_value = np.iinfo(np.uint32).max
+        invalid_mask = data == invalid_value
+    
+        self.mask = np.where(invalid_mask | (self.mask > 0), 1, 0)
+        data[invalid_mask] = 0
+    
+        # Convert to floating point before filtering and background subtraction
+        data = data.astype(np.float32, copy=False)
+    
         if self.params["hot_pixel_filter"]:
             self.logger.info("hot_pixel_filter requested.")
+    
             if isinstance(self.params["hot_pixel_filter"], tuple):
-                self.logger.info(
-                    "Hot pixel filter parameters are : "
-                    f"{self.params['hot_pixel_filter']}"
-                )
-
+                threshold, kernel_size = self.params["hot_pixel_filter"]
                 data, hot_pixel_mask = hot_pixel_filter(
-                    data, *self.params["hot_pixel_filter"]
+                    data, threshold, kernel_size
                 )
             else:
-                self.logger.info(
-                    "Will use defaults parameters: threshold = 1e2, "
-                    "kernel_size = 3 "
-                )
                 data, hot_pixel_mask = hot_pixel_filter(data)
-            self.mask = np.where(hot_pixel_mask + self.mask > 0, 1, 0)
-
+    
+            self.mask = np.where(hot_pixel_mask | (self.mask > 0), 1, 0)
+    
         if self.params["background_level"]:
             self.logger.info(
                 f"background_level set to {self.params['background_level']}, "
@@ -1106,6 +1121,7 @@ class BcdiPipeline(Pipeline):
             )
             data -= self.params["background_level"]
             data[data < 0] = 0
+    
         return data
 
     def _bin_detector(self, roi: list) -> list:
@@ -2237,7 +2253,10 @@ reconstruction (best solution).""",
             support_morph_close_size=self.params["amplitude_morph_close_size"],
         )
         self.logger.info(
-            f"The final output array size is {self.structural_props['amplitude'].shape} with an interpolated voxel size (nm) of {self.structural_props['voxel_size']}"
+            f"The final output array size is "
+            f"{self.structural_props['amplitude'].shape} "
+            f"with a voxel size (nm) of "
+            f"{self.structural_props['voxel_size']}"
         )
         self.params["voxel_size"] = self.structural_props["voxel_size"]
 
@@ -2634,12 +2653,29 @@ reconstruction (best solution).""",
                 ],
                 "summary": self.dislocation_summary,
             }
+        
             graph_path = (
                 f"{self.dump_dir}/S{self.scan}_dislocation_graph.json"
             )
             with open(graph_path, "w", encoding="utf-8") as graph_file:
                 json.dump(graph_data, graph_file, indent=2)
+        
             self.logger.info(f"Dislocation graph saved to {graph_path}.")
+        
+            # Also export the dislocation graph as VTK PolyData.
+            if IS_VTK_AVAILABLE:       
+                vtp_path = (
+                    f"{self.dump_dir}/S{self.scan}_dislocation_graph.vtp"
+                )
+                save_dislocation_graph_as_vtp(
+                    self.dislocation_graph,
+                    vtp_path,
+                    radius_nm=2.0,
+                    resolution=1,
+                )
+                self.logger.info(
+                    f"Dislocation graph saved to {vtp_path}."
+                )
 
         # Save as vti
         if IS_VTK_AVAILABLE:               

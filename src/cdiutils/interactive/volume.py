@@ -862,8 +862,10 @@ def plot_3d_isosurface(
                 fig.data[1].j = faces[:, 1]
                 fig.data[1].k = faces[:, 2]
         
-            fig.layout.title = (
-                f"{title} - {qty_name} (iso={iso_level:.2f})"
+            fig.layout.title = dict(
+                text=f"{title} - {qty_name} (iso={iso_level:.2f})",
+                x=0.5,
+                xanchor="center",
             )
             
     # Attach observers to widgets
